@@ -1,0 +1,13 @@
+{
+  "name": "access2future",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Microsoft Access migration planning application",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:native": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/native-smoke.ps1"
+  }
+}

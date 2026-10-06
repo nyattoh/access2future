@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "source": { "name": "合成デモ・受注管理", "kind": "synthetic" },
+  "assets": [
+    { "id": "form:受注入力", "kind": "form", "name": "受注入力", "caption": "受注入力", "dependsOn": ["query:受注明細", "macro:受注確定"], "status": "supported", "issues": [] },
+    { "id": "form:顧客管理", "kind": "form", "name": "顧客管理", "caption": "顧客管理", "dependsOn": ["table:顧客"], "status": "supported", "issues": [] },
+    { "id": "page:受注照会", "kind": "page", "name": "受注照会", "caption": "受注照会（旧ページ）", "dependsOn": ["query:受注明細"], "status": "unsupported", "issues": [{ "code": "LEGACY_PAGE", "message": "旧ページの再現方法は未検証です。画面と操作を利用者に確認する必要があります。" }] },
+    { "id": "report:請求書", "kind": "report", "name": "請求書", "caption": "請求書", "dependsOn": ["query:請求対象"], "status": "supported", "issues": [] },
+    { "id": "query:受注明細", "kind": "query", "name": "受注明細", "dependsOn": ["table:受注", "table:顧客"], "status": "supported", "issues": [] },
+    { "id": "query:請求対象", "kind": "query", "name": "請求対象", "dependsOn": ["table:受注", "table:請求"], "status": "supported", "issues": [] },
+    { "id": "macro:受注確定", "kind": "macro", "name": "受注確定", "dependsOn": ["module:金額計算"], "status": "supported", "issues": [] },
+    { "id": "module:金額計算", "kind": "module", "name": "金額計算", "dependsOn": ["table:受注"], "status": "partial", "issues": [{ "code": "BUSINESS_RULE_REVIEW", "message": "消費税の丸めと受注確定条件は利用者確認が必要です。業務処理は実行していません。" }] },
+    { "id": "table:顧客", "kind": "table", "name": "顧客", "dependsOn": [], "status": "supported", "issues": [], "local": true, "fields": [{ "name": "顧客ID", "dataType": "Long", "required": true, "isPrimaryKey": true }, { "name": "顧客名", "dataType": "Text", "required": true, "isPrimaryKey": false }] },
+    { "id": "table:受注", "kind": "table", "name": "受注", "dependsOn": ["table:顧客"], "status": "supported", "issues": [], "local": true, "fields": [{ "name": "受注ID", "dataType": "Long", "required": true, "isPrimaryKey": true }, { "name": "顧客ID", "dataType": "Long", "required": true, "isPrimaryKey": false }, { "name": "受注日", "dataType": "DateTime", "required": true, "isPrimaryKey": false }, { "name": "金額", "dataType": "Currency", "required": true, "isPrimaryKey": false }] },
+    { "id": "table:請求", "kind": "table", "name": "請求", "dependsOn": ["table:受注"], "status": "supported", "issues": [], "local": true, "fields": [{ "name": "請求ID", "dataType": "Long", "required": true, "isPrimaryKey": true }, { "name": "受注ID", "dataType": "Long", "required": true, "isPrimaryKey": false }, { "name": "請求日", "dataType": "DateTime", "required": true, "isPrimaryKey": false }] }
+  ],
+  "relations": [
+    { "from": "table:受注", "to": "table:顧客", "fields": [{ "from": "顧客ID", "to": "顧客ID" }], "enforced": true },
+    { "from": "table:請求", "to": "table:受注", "fields": [{ "from": "受注ID", "to": "受注ID" }], "enforced": true }
+  ],
+  "limitations": [{ "code": "SYNTHETIC_ONLY", "message": "全オブジェクトは完全な合成例です。実在の業務データ、原本、外部テーブルは読み込んでいません。" }]
+}

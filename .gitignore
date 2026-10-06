@@ -18,3 +18,9 @@
 Thumbs.db
 .vscode/
 .idea/
+
+# Local private analysis, dependencies and browser evidence
+.local/
+node_modules/
+test-results/
+artifacts/screenshots/
