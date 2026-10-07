@@ -477,3 +477,32 @@ test('report-root: 選択画面の文言は帳票とData Access Pagesを示す',
   assert.match(source, /ページがないとは判断しません/);
   assert.match(source, /取得できても非対応のままです/);
 });
+
+test('計画に業務フロー候補とER図のMermaidを含める', () => {
+  const input = inventory([
+    asset('form:受注', 'form', ['table:受注']), asset('form:顧客', 'form', ['table:受注']),
+    asset('table:受注', 'table', [], { fields: [{ name: '受注番号', dataType: 'Long', isPrimaryKey: true }, { name: '顧客"ID', dataType: '長整数' }] }),
+    asset('table:顧客', 'table', [], { fields: [{ name: '顧客ID', dataType: 'Long', isPrimaryKey: true }] }),
+    asset('table:無関係', 'table')
+  ], { relations: [{ from: 'table:受注', to: 'table:顧客', fields: [{ from: '顧客ID', to: '顧客ID' }] }] });
+  const plan = buildPlan(input, { selectedIds: ['form:受注'], usage: solo });
+  assert.match(plan.diagrams.flow, /^flowchart LR/);
+  assert.match(plan.diagrams.flow, /form: 受注/);
+  assert.match(plan.diagrams.flow, /form: 顧客/, '共有資産に依存する未選択画面も点線で示す');
+  assert.match(plan.diagrams.er, /^erDiagram/);
+  assert.match(plan.diagrams.er, /\|\|--o\{/);
+  assert.match(plan.diagrams.er, /顧客#quot;ID/);
+  assert.doesNotMatch(plan.diagrams.er, /無関係/);
+  const text = renderPlanMarkdown(plan);
+  assert.match(text, /```mermaid\nflowchart LR/);
+  assert.match(text, /```mermaid\nerDiagram/);
+});
+
+test('影響候補の未選択画面は中間資産を経由する経路も図に示す', async () => {
+  const demo = JSON.parse(await readFile(new URL('../samples/demo.inventory.json', import.meta.url), 'utf8'));
+  const { flow } = buildPlan(demo, { selectedIds: ['form:受注入力'], usage: solo }).diagrams;
+  const id = name => flow.match(new RegExp(String.raw`(n\d+)\[\(?"[a-z]+: ${name}"`))[1];
+  const lines = flow.split('\n').map(line => line.trim());
+  assert.ok(lines.includes(`${id('請求書')} -.-> ${id('請求対象')}`));
+  assert.ok(lines.includes(`${id('請求対象')} -.->|影響候補| ${id('受注')}`));
+});

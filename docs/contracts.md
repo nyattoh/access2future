@@ -34,7 +34,7 @@
 - `normalizeInventory(input)`: 入力を検証し、既知の安全なフィールドを持つInventoryを返す。不正な版・重複id・不正な型を拒否する。
 - `analyzeSelection(inventory, selectedIds)`: `{selectedIds,dependencyIds,impactedIds,sharedIds,unresolved,blockers,evidence}` を返す。dependencyIdsは選択対象以外の依存資産。impactedIdsは共有資産に依存する未選択のform/page/report。循環で停止せず、選択を勝手に広げない。
 - `recommendTargets(inventory, usage, analysis)`: `{id,label,fit,reasons,requirements,unknowns}` の配列。idは `web` / `excel` / `sheets-gas`、fitは `recommended` / `conditional` / `not-recommended`。相対的な計画支援の判断であり、未実証の適合保証をしない。
-- `buildPlan(inventory, options)`: optionsは `{selectedIds,usage,targetId,notes}`。`{version,status,source,analysis,usage,target,requirements,migrationSteps,validationSteps,risks,unresolved,notices,hand_over}` を返す。statusは `draft` / `review-required`。requirementsは `{id,title,description,evidence,verification,confirmed}`、confirmedは自動でtrueにしない。
+- `buildPlan(inventory, options)`: optionsは `{selectedIds,usage,targetId,notes}`。`{version,status,source,analysis,usage,target,requirements,migrationSteps,validationSteps,risks,unresolved,notices,diagrams,hand_over}` を返す。diagramsは `{flow,er}` のMermaid文字列で、取得済みのdependsOnとrelationsだけから作る（依存範囲にテーブルがなければerは空文字）。statusは `draft` / `review-required`。requirementsは `{id,title,description,evidence,verification,confirmed}`、confirmedは自動でtrueにしない。
 - `renderPlanMarkdown(plan)`: 人が確認できる計画を返す。出典・未解決事項・合成/実Accessの区別を含む。
 - `mergeInventories(inventories)`: フロント/バックなど複数の構造資料を、sourceごとのIDに分離して統合する。linkedDatabaseNameとlinkedTableNameが一致する場合だけリンクを解決し、未提供・曖昧はlimitationとして保持。source.kindはinventory。統合しただけで実取得や移行再現を保証しない。
 

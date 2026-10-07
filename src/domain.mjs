@@ -308,6 +308,58 @@ export function recommendTargets(input, inputUsage, analysis) {
   return candidates;
 }
 
+function mermaidText(value) {
+  return String(value).replace(/"/g, '#quot;').replace(/[\r\n`]/g, ' ');
+}
+
+// 取得済みの依存と関連だけから図を作る。業務名や手順は推測しない。
+function buildDiagrams(inventory, analysis) {
+  const byId = new Map(inventory.assets.map(asset => [asset.id, asset]));
+  const included = new Set([...analysis.selectedIds, ...analysis.dependencyIds]);
+  const nodeIds = new Map();
+  const node = id => { if (!nodeIds.has(id)) nodeIds.set(id, `n${nodeIds.size + 1}`); return nodeIds.get(id); };
+  const shape = asset => asset.kind === 'table' ? `[("table: ${mermaidText(asset.name)}")]` : `["${asset.kind}: ${mermaidText(asset.name)}"]`;
+  const flow = ['flowchart LR'];
+  const edges = [];
+  for (const id of included) for (const to of byId.get(id).dependsOn) if (included.has(to)) edges.push(`  ${node(id)} --> ${node(to)}`);
+  // 未選択画面から共有資産までの経路を点線で描く。
+  const dotted = new Set();
+  for (const root of analysis.impactedIds) {
+    const seen = new Set([root]);
+    const stack = [[root]];
+    while (stack.length) {
+      const path = stack.pop();
+      for (const to of byId.get(path.at(-1))?.dependsOn ?? []) {
+        if (included.has(to)) [...path, to].slice(1).forEach((id, index) => dotted.add(`${path[index]}\u0000${id}`));
+        else if (byId.has(to) && !seen.has(to)) { seen.add(to); stack.push([...path, to]); }
+      }
+    }
+  }
+  for (const key of dotted) { const [from, to] = key.split('\u0000'); edges.push(`  ${node(from)} -.->${included.has(to) ? '|影響候補|' : ''} ${node(to)}`); }
+  for (const relation of inventory.relations) if (included.has(relation.from) && included.has(relation.to)) edges.push(`  ${node(relation.from)} ---|関連| ${node(relation.to)}`);
+  for (const id of [...included, ...analysis.impactedIds]) node(id);
+  for (const [id, key] of nodeIds) flow.push(`  ${key}${shape(byId.get(id))}`);
+  flow.push(...edges);
+  const selected = analysis.selectedIds.map(id => nodeIds.get(id));
+  flow.push('  classDef selected stroke-width:3px', `  class ${selected.join(',')} selected`);
+  if (analysis.impactedIds.length) flow.push('  classDef impacted stroke-dasharray:5 5', `  class ${analysis.impactedIds.map(id => nodeIds.get(id)).join(',')} impacted`);
+
+  const tables = inventory.assets.filter(asset => asset.kind === 'table' && included.has(asset.id));
+  const tableIds = new Map(tables.map((asset, index) => [asset.id, `t${index + 1}`]));
+  const er = ['erDiagram'];
+  for (const asset of tables) {
+    er.push(`  ${tableIds.get(asset.id)}["${mermaidText(asset.name)}"] {`);
+    for (const [index, field] of (asset.fields ?? []).entries()) {
+      const type = /^[A-Za-z_][A-Za-z0-9_]*$/.test(field.dataType ?? '') ? field.dataType : 'field';
+      er.push(`    ${type} f${index + 1}${field.isPrimaryKey ? ' PK' : ''} "${mermaidText(field.name)}"`);
+    }
+    er.push('  }');
+  }
+  // relationのfromは外部キー側、toは主キー側（export-access.ps1の定義）。
+  for (const relation of inventory.relations) if (tableIds.has(relation.from) && tableIds.has(relation.to)) er.push(`  ${tableIds.get(relation.to)} ||--o{ ${tableIds.get(relation.from)} : "${mermaidText(relation.fields.map(field => field.to === field.from ? field.to : `${field.to}=${field.from}`).join(', ') || '関連')}"`);
+  return { flow: flow.join('\n'), er: er.join('\n') };
+}
+
 export function buildPlan(input, options) {
   const inventory = normalizeInventory(input);
   object(options, 'options');
@@ -356,7 +408,7 @@ export function buildPlan(input, options) {
   if (notes) notices.push(`利用者メモ: ${notes}`);
   return {
     version: 1, status: unresolved.length ? 'review-required' : 'draft', source: inventory.source, analysis, usage, target,
-    requirements, migrationSteps, validationSteps, risks, unresolved, notices,
+    requirements, migrationSteps, validationSteps, risks, unresolved, notices, diagrams: buildDiagrams(inventory, analysis),
     hand_over: { summary: '選択範囲から移行計画草案を生成しました。要件承認・実装・移行・受入検証は未実施です。', selectedIds: analysis.selectedIds, targetId: target.id, pending: ['要件と変更境界の利用者承認', '未解決事項の確認', '実装・移行と受入検証'] }
   };
 }
@@ -373,6 +425,7 @@ export function renderPlanMarkdown(plan) {
   const lines = ['# 移行計画（草案）', '', `状態: ${markdown(statusName)} / 要件は未承認`, `出典: ${markdown(plan.source.name)}（${markdown(sourceName)}）`, '', '## 注意事項', ...plan.notices.map(text => `- ${markdown(text)}`), '', '## 選択範囲と依存', `- 選択: ${plan.analysis.selectedIds.map(markdown).join('、')}`, `- 依存: ${plan.analysis.dependencyIds.map(markdown).join('、') || '取得された依存なし'}`, `- 共有資産: ${plan.analysis.sharedIds.map(markdown).join('、') || '確認された共有なし'}`, `- 未選択への影響候補: ${plan.analysis.impactedIds.map(markdown).join('、') || '取得済み定義からの候補なし'}`, '', '### 根拠', ...plan.analysis.evidence.map(text => `- ${markdown(text)}`), '', '## 利用形態', ...Object.keys(usageLabels).map(key => `- ${usageLabels[key]}: ${markdown(usageName(key, plan.usage[key]))}`), '', '## 移行先候補', `${markdown(plan.target.label)}（${markdown(fitName)}）`, ...plan.target.reasons.map(text => `- ${markdown(text)}`), '', '## 要件（すべて未承認）'];
   for (const requirement of plan.requirements) lines.push('', `### ${markdown(requirement.id)} ${markdown(requirement.title)}`, markdown(requirement.description), '', `根拠: ${requirement.evidence.map(markdown).join(' / ')}`, `検証方法: ${markdown(requirement.verification)}`, '承認: 未承認');
   for (const [title, items] of [['移行計画', plan.migrationSteps], ['検証計画', plan.validationSteps], ['リスク', plan.risks]]) lines.push('', `## ${title}`, ...items.map(text => `- ${markdown(text)}`));
+  if (plan.diagrams) lines.push('', '## 図（Mermaid）', '取得済みの依存・関連だけから描いた候補です。動的参照や未取得の定義は含まれず、業務の手順そのものではありません。', '', '### 業務フロー候補（選択対象の依存図）', '太線は選択対象、点線は影響を受ける未選択画面です。', '', '```mermaid', plan.diagrams.flow, '```', '', '### ER図（依存範囲のテーブル）', '', ...(plan.diagrams.er ? ['```mermaid', plan.diagrams.er, '```'] : ['依存範囲にテーブルはありません。']));
   lines.push('', '## 未解決事項', ...(plan.unresolved.length ? plan.unresolved.map(item => `- ${markdown(item.code)}: ${markdown(item.message)}${item.assetId ? `（${markdown(item.assetId)}）` : ''}`) : ['- 取得済み情報からの指摘なし。要件・適合・動作の承認と検証は未実施です。']), '', '## 引き継ぎ', markdown(plan.hand_over.summary), ...plan.hand_over.pending.map(text => `- ${markdown(text)}`), '');
   return lines.join('\n');
 }

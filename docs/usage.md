@@ -74,6 +74,13 @@ Access解析中は、ファイルごとに「確認済み資産：35 / 127件（
 
 「Markdownを保存」は `access-migration-plan.md`、「JSONを保存」は `access-migration-plan.json` を、このPCへ保存します。
 
+保存した計画には Mermaid の図が2つ入ります。Markdown では「図（Mermaid）」の節、JSON では `diagrams.flow` / `diagrams.er` です。
+
+- 業務フロー候補: 選択対象から依存する資産までの図です。太線が選択対象、点線が影響を受ける未選択画面からの経路です。
+- ER図: 依存範囲にあるテーブルの項目と、Access に定義された関連です。
+
+どちらも取得済みの依存と関連だけから描いた候補で、業務の手順そのものではありません。GitHub、Mermaid 対応のエディタ、https://mermaid.live などで図として表示できます。
+
 前の工程に戻って入力や選択を変えると、計画は作り直されます。
 
 ## 資料の区別
