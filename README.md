@@ -54,6 +54,14 @@ npm start
 | `access-migration-plan.md` | 関係者が読んで要件を確認・承認する、未解決事項を確認リストとして使う、見積もりの土台にする |
 | `access-migration-plan.json` | Claude Code などのAIに渡して実装計画やコードを作らせる、スクリプトで課題管理表に流し込む |
 
+### 図のサンプル
+
+下図は合成サンプルから出力した例です。業務手順を確定した図ではなく、取得できた依存候補とテーブル関連を示します。
+
+![合成サンプルの業務フロー候補図](docs/images/mermaid-flow-sample.png)
+
+![合成サンプルの業務フロー候補図とER図](docs/images/mermaid-flow-and-er-sample.png)
+
 要件は自動では承認されません。出力は**草案**であり、人が確認して確定させる前提です。
 
 詳しい操作は [docs/usage.md](docs/usage.md) を参照してください。
