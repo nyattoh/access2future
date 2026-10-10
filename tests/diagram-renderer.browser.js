@@ -12,5 +12,11 @@ async function diagramRendererRegression() {
   if (!fallbackRoot.querySelector('.diagram-warning') || fallbackRoot.querySelector('.diagram-source')?.textContent !== invalid) {
     throw new Error('Invalid diagram did not show the safe source fallback');
   }
-  return { result: 'passed', checks: ['strict-svg-rendering', 'accessible-svg-image', 'invalid-source-text-fallback'] };
+  const emptyRoot = document.createElement('div');
+  let emptyRendererCalls = 0;
+  await renderDiagram(emptyRoot, '', 'er', { render: async () => { emptyRendererCalls += 1; throw new Error('empty source must not render'); } });
+  if (emptyRendererCalls !== 0 || emptyRoot.querySelector('.diagram-empty')?.textContent !== '依存範囲にテーブルはありません。') {
+    throw new Error('Empty ER diagram did not show the no-table state without calling Mermaid');
+  }
+  return { result: 'passed', checks: ['strict-svg-rendering', 'accessible-svg-image', 'invalid-source-text-fallback', 'empty-er-state'] };
 }

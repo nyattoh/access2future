@@ -1497,7 +1497,11 @@ fn build_diagrams(inventory: &Value, analysis: &Value) -> Value {
             )
         })
         .collect();
-    let mut er = vec!["erDiagram".to_string()];
+    let mut er = if tables.is_empty() {
+        Vec::new()
+    } else {
+        vec!["erDiagram".to_string()]
+    };
     for asset in &tables {
         er.push(format!(
             "  {}[\"{}\"] {{",

@@ -1,4 +1,14 @@
 export async function renderDiagram(container, source, id, renderer = globalThis.mermaid) {
+  if (!source.trim()) {
+    const previousUrl = container.dataset.objectUrl;
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+    delete container.dataset.objectUrl;
+    const message = document.createElement('p');
+    message.className = 'diagram-empty';
+    message.textContent = '依存範囲にテーブルはありません。';
+    container.replaceChildren(message);
+    return true;
+  }
   try {
     if (!renderer) throw new Error('図の描画機能を読み込めませんでした。');
     const result = await renderer.render(`plan-${id}`, source);

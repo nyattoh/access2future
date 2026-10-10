@@ -63,6 +63,13 @@ test('同梱Mermaid rendererを外部通信なしで配信し、画像Blobだけ
     assert.equal(vendor.status, 200);
     assert.match(vendor.headers.get('content-type'), /javascript/);
     await vendor.body.cancel();
+    const notices = await fetch(`${base}/vendor/THIRD_PARTY_NOTICES.txt`);
+    assert.equal(notices.status, 200);
+    assert.match(notices.headers.get('content-type'), /text\/plain/);
+    assert.match(await notices.text(), /DOMPurify 3\.4\.12/);
+    const lodashLicense = await fetch(`${base}/vendor/licenses/lodash-MIT.txt`);
+    assert.equal(lodashLicense.status, 200);
+    assert.match(await lodashLicense.text(), /Copyright OpenJS Foundation/);
   });
 });
 

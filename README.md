@@ -111,4 +111,4 @@ npm run desktop:build
 
 ## ライセンス
 
-このプロジェクトは [Apache License 2.0](LICENSE) のもとで提供します。依存ソフトウェアと同梱資産には、それぞれのライセンス条件が適用されます。
+このプロジェクトは [Apache License 2.0](LICENSE) のもとで提供します。Mermaid Tinyとそのバンドル依存のライセンス・著作権表示は [THIRD_PARTY_NOTICES.txt](public/vendor/THIRD_PARTY_NOTICES.txt) と同じディレクトリのライセンス文書に記載しています。

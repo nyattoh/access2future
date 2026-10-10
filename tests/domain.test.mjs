@@ -498,6 +498,15 @@ test('計画に業務フロー候補とER図のMermaidを含める', () => {
   assert.match(text, /```mermaid\nerDiagram/);
 });
 
+test('依存範囲にテーブルがないときER図を空にし、Markdownで説明する', () => {
+  const input = inventory([asset('form:A', 'form')]);
+  const plan = buildPlan(input, { selectedIds: ['form:A'], usage: solo });
+  assert.equal(plan.diagrams.er, '');
+  const text = renderPlanMarkdown(plan);
+  assert.match(text, /### ER図（依存範囲のテーブル）\n\n依存範囲にテーブルはありません。/);
+  assert.doesNotMatch(text, /### ER図[^]*```mermaid\nerDiagram/);
+});
+
 test('影響候補の未選択画面は中間資産を経由する経路も図に示す', async () => {
   const demo = JSON.parse(await readFile(new URL('../samples/demo.inventory.json', import.meta.url), 'utf8'));
   const { flow } = buildPlan(demo, { selectedIds: ['form:受注入力'], usage: solo }).diagrams;

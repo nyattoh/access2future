@@ -346,7 +346,7 @@ function buildDiagrams(inventory, analysis) {
 
   const tables = inventory.assets.filter(asset => asset.kind === 'table' && included.has(asset.id));
   const tableIds = new Map(tables.map((asset, index) => [asset.id, `t${index + 1}`]));
-  const er = ['erDiagram'];
+  const er = tables.length ? ['erDiagram'] : [];
   for (const asset of tables) {
     er.push(`  ${tableIds.get(asset.id)}["${mermaidText(asset.name)}"] {`);
     for (const [index, field] of (asset.fields ?? []).entries()) {

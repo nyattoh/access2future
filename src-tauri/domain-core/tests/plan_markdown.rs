@@ -185,6 +185,20 @@ fn plan_contains_mermaid_flow_and_er_diagrams() {
 }
 
 #[test]
+fn er_diagram_is_empty_when_dependency_scope_has_no_tables() {
+    let input = inventory_x(&[asset("form:A", "form", &[])], json!({}));
+    let plan = build_plan(
+        &input,
+        &json!({ "selectedIds": ["form:A"], "usage": common::solo_usage() }),
+    )
+    .unwrap();
+    assert_eq!(plan["diagrams"]["er"], json!(""));
+    let markdown = render_plan_markdown(&plan);
+    assert!(markdown.contains("### ER図（依存範囲のテーブル）\n\n依存範囲にテーブルはありません。"));
+    assert!(!markdown.contains("```mermaid\nerDiagram"));
+}
+
+#[test]
 fn impacted_unselected_screens_show_paths_via_intermediate_assets() {
     let demo = common::demo_inventory();
     let plan = build_plan(

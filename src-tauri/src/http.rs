@@ -873,7 +873,7 @@ mod tests {
         );
 
         let renderer = send(
-            state,
+            state.clone(),
             Method::GET,
             "/vendor/mermaid.tiny.js",
             json!({}),
@@ -895,6 +895,26 @@ mod tests {
                 .unwrap()
                 .contents()
                 .len()
+        );
+
+        let notices = send(
+            state,
+            Method::GET,
+            "/vendor/THIRD_PARTY_NOTICES.txt",
+            json!({}),
+            false,
+        )
+        .await;
+        assert_eq!(notices.status(), StatusCode::OK);
+        assert!(
+            notices.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/plain")
+        );
+        assert!(
+            String::from_utf8_lossy(&notices.into_body().collect().await.unwrap().to_bytes())
+                .contains("DOMPurify 3.4.12")
         );
     }
 
