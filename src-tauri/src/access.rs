@@ -95,8 +95,13 @@ fn finish_after_cleanup(
 }
 
 impl AccessHelper {
+    fn script_path(&self) -> PathBuf {
+        let path = self.script_dir.join("export-access.ps1");
+        dunce::simplified(&path).to_path_buf()
+    }
+
     pub async fn capabilities(&self) -> Value {
-        let script = self.script_dir.join("export-access.ps1");
+        let script = self.script_path();
         let work =
             std::env::temp_dir().join(format!("access2future-capability-{}", uuid::Uuid::new_v4()));
         if tokio::fs::create_dir(&work).await.is_err() {
@@ -180,7 +185,7 @@ impl AccessHelper {
             return Err(AccessFailure::cancelled());
         }
 
-        let script = self.script_dir.join("export-access.ps1");
+        let script = self.script_path();
         let mut child = hidden_powershell()
             .args(["-File"])
             .arg(script)
@@ -295,7 +300,7 @@ impl AccessHelper {
     async fn cleanup_owned(&self, work: &Path) {
         let _ = hidden_powershell()
             .args(["-File"])
-            .arg(self.script_dir.join("export-access.ps1"))
+            .arg(self.script_path())
             .args(["-CleanupOwned", "-WorkDirectory"])
             .arg(work)
             .output()
@@ -423,6 +428,34 @@ async fn wait_for_owner_or_exit(work: &Path, child: &mut tokio::process::Child, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn produces_powershell_compatible_helper_paths() {
+        let script_path = |script_dir: &str| {
+            AccessHelper {
+                script_dir: PathBuf::from(script_dir),
+            }
+            .script_path()
+        };
+
+        assert_eq!(
+            script_path(r"\\?\C:\Program Files\Access2Future\scripts"),
+            PathBuf::from(r"C:\Program Files\Access2Future\scripts\export-access.ps1")
+        );
+        assert_eq!(
+            script_path(r"\\?\D:\作業\scripts"),
+            PathBuf::from(r"D:\作業\scripts\export-access.ps1")
+        );
+        assert_eq!(
+            script_path(r"C:\Program Files\Access2Future\scripts"),
+            PathBuf::from(r"C:\Program Files\Access2Future\scripts\export-access.ps1")
+        );
+        assert_eq!(
+            script_path(r"\\?\UNC\server\share\scripts"),
+            PathBuf::from(r"\\?\UNC\server\share\scripts\export-access.ps1")
+        );
+    }
 
     #[test]
     fn accepts_only_supported_access_names_and_signatures() {
