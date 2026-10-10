@@ -96,7 +96,8 @@ fn finish_after_cleanup(
 
 impl AccessHelper {
     fn script_path(&self) -> PathBuf {
-        self.script_dir.join("export-access.ps1")
+        let path = self.script_dir.join("export-access.ps1");
+        dunce::simplified(&path).to_path_buf()
     }
 
     pub async fn capabilities(&self) -> Value {
