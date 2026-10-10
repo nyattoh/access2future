@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +19,7 @@ const inventory = {
   relations: [], limitations: [],
 };
 const usage = { users: 'solo', concurrentEditing: false, location: 'device', offlineRequired: true, permissions: 'same', coexistence: 'undecided' };
+const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 async function withServer(run, overrides = {}) {
   const tempDir = await mkdtemp(join(tmpdir(), 'access2future-http-test-'));
@@ -42,6 +44,7 @@ test('ローカルのヘルスと合成デモを、実解析と区別して返�
     const health = await fetch(`${base}/api/health`);
     assert.equal(health.status, 200);
     const state = await health.json();
+    assert.equal(state.version, packageVersion);
     assert.equal(state.access.available, true);
     assert.equal(health.headers.get('access-control-allow-origin'), null);
     assert.match(health.headers.get('cache-control'), /no-store/);

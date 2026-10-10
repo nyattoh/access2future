@@ -830,6 +830,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn health_reports_the_cargo_package_version() {
+        let state = state();
+        *state.0.access_cache.lock().await =
+            Some((Instant::now(), json!({"available": true})));
+
+        let response = health(State(state)).await;
+
+        assert_eq!(response.0["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
     async fn desktop_bundles_the_local_mermaid_renderer_and_blob_image_policy() {
         let state = state();
         let page = send(state.clone(), Method::GET, "/", json!({}), false).await;
