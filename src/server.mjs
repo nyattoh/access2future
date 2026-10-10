@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, extname, sep } from 'node:path';
@@ -6,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { normalizeInventory, mergeInventories, analyzeSelection, recommendTargets, buildPlan, renderPlanMarkdown } from './domain.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const appVersion = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
 const publicRoot = resolve(root, 'public');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
 
@@ -117,7 +119,7 @@ export function createAppServer(options = {}) {
 
       if (request.method === 'GET' && pathname === '/api/health') {
         const access = await accessState();
-        reply(response, 200, { version: '0.1.0', mode: 'local', access, maxFileBytes });
+        reply(response, 200, { version: appVersion, mode: 'local', access, maxFileBytes });
         return;
       }
 

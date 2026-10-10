@@ -247,7 +247,9 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
         .as_ref()
         .map(|(_, value)| value.clone())
         .unwrap_or_else(|| json!({"available":false}));
-    Json(json!({"version":"0.1.0","mode":"local","access":access,"maxFileBytes":MAX_FILE_BYTES}))
+    Json(
+        json!({"version":env!("CARGO_PKG_VERSION"),"mode":"local","access":access,"maxFileBytes":MAX_FILE_BYTES}),
+    )
 }
 
 async fn demo() -> Result<Json<Value>, ApiError> {
@@ -827,6 +829,16 @@ mod tests {
 
     fn state() -> AppState {
         AppState::new(39177, "test-token".into(), PathBuf::new())
+    }
+
+    #[tokio::test]
+    async fn health_reports_the_cargo_package_version() {
+        let state = state();
+        *state.0.access_cache.lock().await = Some((Instant::now(), json!({"available": true})));
+
+        let response = health(State(state)).await;
+
+        assert_eq!(response.0["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[tokio::test]
