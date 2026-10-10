@@ -260,7 +260,7 @@ tests/access-import.test.mjsへVBAなしフォームの空要約を受け入れ�
 
 ### 2026-10-11 Apache-2.0 decision
 
-The user selected Apache-2.0 for the first public release. `LICENSE` contains the official Apache Foundation 2.0 text. README, npm lock/package metadata and Cargo manifests identify Apache-2.0. Tauri resources include the project licence plus Mermaid Tiny and bundled component notices/licences. The rebuilt NSIS installer passed install/start/synthetic API and diagram/uninstall smoke with all licence files present; latest artifact is 3,782,576 bytes, SHA256 `1C59DD7C1C912DAF0DC9263013447114DD5E6432150E74EA208F5A552EF75F8D`. Review fixes are being prepared for Draft PR #3; public release remains on hold until GitHub review and merge. Installer remains unsigned.
+The user selected Apache-2.0 for the first public release. `LICENSE` contains the official Apache Foundation 2.0 text. README, npm lock/package metadata and Cargo manifests identify Apache-2.0. Tauri resources include the project licence plus Mermaid Tiny and bundled component notices/licences. The rebuilt NSIS installer passed install/start/synthetic API and diagram/uninstall smoke with all licence files present; latest artifact is 3,782,037 bytes, SHA256 `7BD3B578DC81C1F6279EC51EE08BC71EF0F0D59C6908B861C812FD4C081C07A5`. Review fixes are pushed to Draft PR #3; public release remains on hold until GitHub review and merge. Installer remains unsigned.
 
 ### 2026-10-11 Grok r4 review findings
 
