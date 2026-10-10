@@ -149,3 +149,7 @@ TDDでは画面の合成計画にSVGがないためbrowser testが失敗した�
 NSIS current-user installerは3,767,255 bytes、SHA256 `828AA7F37224D05354ECE7F44FB3BDDF04368F5B81411DA366B3DFEBE2C62421`。合成データだけを使って一時ディレクトリに導入し、実行ファイルがloopback page、vendor asset、tokenなし403、11資産demo、flow/ER planとMarkdown Mermaid fencesを返すことを確認した。Uninstaller exit code 0、install directory removed。アプリはこの試験後に停止し、永続インストールはない。Install reportは `.local/autonomous-run-20261011/evidence/nsis-mermaid-tiny-smoke.json`。
 
 Computer Useの実ウィンドウ撮影は `Computer Use native pipe is unavailable: failed to connect native pipe: 指定されたファイルが見つかりません。 (os error 2)` で不可。表示の目視確認はNode Web adapterの同一frontendで行い、WebView2 native画面の画像確認とは区別する。署名・公開release、Git push、Draft PRはこの記録時点で未実施。ユーザーはpushとPR/releaseを希望し、pushとDraft PR準備を許可済み。案件規則に沿い、PRをDraftで作成してGitHub review待ちとする。
+
+### 2026-10-11 Apache-2.0選択
+
+利用者は初回公開版のプロジェクトライセンスとしてApache-2.0を選択した。公式Apache FoundationのLICENSE-2.0本文を`LICENSE`へ配置し、README、npm package、Rust application/domain-core manifestsへ`Apache-2.0`識別子を記載。Mermaid TinyのMIT条件を含む依存・同梱ソフトウェアの個別ライセンス条件は維持する。公開releaseはDraft PR #3のreview/merge後まで保留し、Windows installerは未署名のまま。
