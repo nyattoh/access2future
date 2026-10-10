@@ -601,11 +601,32 @@ function step4(main) {
 }
 
 // ---- 5: 移行計画 ----
-function save(name, text, type) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = h('a', { href: url, download: name });
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+async function save(name, text, type, extension) {
+  const status = document.querySelector('#save-status');
+  status.textContent = '';
+  try {
+    if (typeof window.showSaveFilePicker === 'function') {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: name,
+        types: [{ description: extension.toUpperCase(), accept: { [type]: [extension] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      status.textContent = `${name} を保存しました。`;
+      return;
+    }
+
+    const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
+    const a = h('a', { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = `${name} のダウンロードを開始しました。ブラウザーのダウンロード先を確認してください。`;
+  } catch (error) {
+    status.textContent = error?.name === 'AbortError'
+      ? '保存をキャンセルしました。'
+      : `${name} を保存できませんでした。もう一度お試しください。`;
+  }
 }
 async function renderPlanDiagrams(plan) {
   for (const id of ['flow', 'er']) {
@@ -622,8 +643,9 @@ function step5(main) {
     h('div', { class: 'notice strong' }, h('p', {}, h('strong', {}, plan.status === 'review-required' ? '草案・未確認の事項が残っています。要件はすべて未承認です。' : '草案です。要件はすべて未承認です。')),
       h('p', {}, `出典: ${plan.source.name}（${kind}）`)),
     h('div', { class: 'save' },
-      h('button', { type: 'button', class: 'btn', onclick: () => save('access-migration-plan.md', '\uFEFF' + state.markdown, 'text/markdown;charset=utf-8') }, 'Markdownを保存'),
-      h('button', { type: 'button', class: 'btn', onclick: () => save('access-migration-plan.json', JSON.stringify(plan, null, 2), 'application/json;charset=utf-8') }, 'JSONを保存')),
+      h('button', { type: 'button', class: 'btn', onclick: () => save('access-migration-plan.md', '\uFEFF' + state.markdown, 'text/markdown', '.md') }, 'Markdownを保存'),
+      h('button', { type: 'button', class: 'btn', onclick: () => save('access-migration-plan.json', JSON.stringify(plan, null, 2), 'application/json', '.json') }, 'JSONを保存')),
+    h('p', { id: 'save-status', class: 'save-status', role: 'status', 'aria-live': 'polite' }),
     h('section', { class: 'block diagrams', 'aria-label': '依存関係の図' }, h('h3', {}, '依存関係の図'),
       ...[['flow', '業務フロー候補図'], ['er', 'ER図']].map(([id, label]) => h('figure', { class: 'diagram-panel', 'data-diagram': id },
         h('figcaption', {}, label), h('div', { class: 'diagram-canvas', 'aria-live': 'polite' })))),

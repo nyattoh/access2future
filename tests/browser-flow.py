@@ -81,6 +81,16 @@ with sync_playwright() as runner:
             saved_plan = json.loads(page.evaluate("window.__savedFiles[1].content"))
             assert saved_plan["usage"]["users"] == "team" and saved_plan["usage"]["location"] == "remote"
             assert page.evaluate("window.__savePickerCalls[1].suggestedName") == "access-migration-plan.json"
+            assert page.evaluate("window.__savePickerCalls[0].types[0].accept['text/markdown'][0]") == ".md"
+            assert page.evaluate("window.__savePickerCalls[1].types[0].accept['application/json'][0]") == ".json"
+
+            page.evaluate("(() => { window.showSaveFilePicker = async () => { throw new DOMException('', 'AbortError') }; return true })()")
+            page.get_by_role("button", name="Markdownを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_have_text("保存をキャンセルしました。")
+
+            page.evaluate("(() => { window.showSaveFilePicker = async () => { throw new Error('write failed') }; return true })()")
+            page.get_by_role("button", name="JSONを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_have_text("access-migration-plan.json を保存できませんでした。もう一度お試しください。")
 
             page.evaluate("window.showSaveFilePicker = undefined")
             with page.expect_download() as event:

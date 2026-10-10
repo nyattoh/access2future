@@ -7,9 +7,11 @@ use std::{net::SocketAddr, path::PathBuf};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 fn is_allowed_navigation(url: &tauri::Url, port: u16) -> bool {
-    url.scheme() == "http"
-        && url.host_str() == Some("127.0.0.1")
-        && url.port() == Some(port)
+    let local =
+        url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(port);
+    let own_blob =
+        url.scheme() == "blob" && url.path().starts_with(&format!("http://127.0.0.1:{port}/"));
+    local || own_blob
 }
 
 fn main() {
