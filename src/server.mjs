@@ -3,11 +3,11 @@ import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, extname, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { normalizeInventory, mergeInventories, buildPlan, renderPlanMarkdown } from './domain.mjs';
+import { normalizeInventory, mergeInventories, analyzeSelection, recommendTargets, buildPlan, renderPlanMarkdown } from './domain.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const publicRoot = resolve(root, 'public');
-const mimeTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const mimeTypes = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
 
 class HttpError extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code; }
@@ -77,7 +77,7 @@ function responseHeaders(response) {
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('Referrer-Policy', 'no-referrer');
-  response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 }
 
 const IMPORT_TIMEOUT_MS = 15 * 60_000; // importAccessへ渡す解析上限。ACCESS_TIMEOUTの文言と揃える
@@ -143,6 +143,24 @@ export function createAppServer(options = {}) {
         try { merged = mergeInventories(body.inventories); }
         catch { throw new HttpError(400, 'INVALID_INVENTORY_SET', '統合する資料の版と資産・リンク情報を確認してください。'); }
         reply(response, 200, merged);
+        return;
+      }
+
+      if (request.method === 'POST' && pathname === '/api/analyze') {
+        const body = await readJson(request, maxJsonBytes);
+        if (!Array.isArray(body?.selectedIds) || !body.selectedIds.length) {
+          throw new HttpError(400, 'NO_SELECTION', 'フォーム・ページ・帳票を1件以上選択してください。');
+        }
+        const inventory = checkedInventory(body.inventory);
+        let analysis;
+        let targets;
+        try {
+          analysis = analyzeSelection(inventory, body.selectedIds);
+          targets = recommendTargets(inventory, body.usage ?? {}, analysis);
+        } catch {
+          throw new HttpError(400, 'INVALID_SELECTION', '選択対象と利用形態を確認してください。');
+        }
+        reply(response, 200, { analysis, targets });
         return;
       }
 

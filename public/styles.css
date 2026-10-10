@@ -107,6 +107,13 @@ aside[hidden] { display: none; }
 .blocks { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 32px; }
 .req { padding: 12px 0; border-top: 1px solid var(--border); }
 .save { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.diagrams { min-width: 0; }
+.diagram-panel { min-width: 0; margin: 16px 0 24px; padding: 12px 0; border-top: 1px solid var(--border); }
+.diagram-panel figcaption { margin-bottom: 8px; font-weight: 700; }
+.diagram-canvas { min-width: 0; overflow: auto; background: var(--surface); border: 1px solid var(--border); padding: 12px; }
+.diagram-image { display: block; max-width: 100%; height: auto; margin-inline: auto; }
+.diagram-warning { margin: 0 0 8px; color: var(--accent); font-weight: 700; }
+.diagram-source { overflow: auto; max-height: 320px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, Consolas, monospace; }
 
 /* inputs */
 .field { width: 100%; min-height: 48px; padding: 8px 12px; border: 1px solid var(--control); border-radius: 2px; background: var(--surface); color: var(--text); font: inherit; }

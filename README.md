@@ -14,7 +14,7 @@ Access ファイルの構造をこのPCの中だけで解析し、移したい�
 - 移行対象（フォーム・帳票・ページ）の選択と、依存資産・共有資産・未選択機能への影響の表示
 - 利用形態（人数、場所、オフライン、同時編集、権限、既存Accessとの共存）の確認
 - 移行先候補（Webアプリ / Excel / Googleスプレッドシート + GAS）の目安の表示
-- 業務フロー候補（依存図）と ER 図を Mermaid で出力
+- 業務フロー候補（依存図）と ER 図を画面内に表示し、Markdown / JSON にも Mermaid 形式で出力
 - 計画を Markdown（人が読む用）と JSON（AI・スクリプト向け）で保存
 
 ## 安全性について
@@ -25,9 +25,9 @@ Access ファイルの構造をこのPCの中だけで解析し、移したい�
 - 元の Access ファイルは変更・削除しません。
 - リンク先のデータベースは自動では開きません。
 
-## 必要なもの
+## Web版の必要なもの
 
-- Node.js 22 以上（npm の依存パッケージはありません）
+- Node.js 22 以上（`npm start` でWeb版を使う場合。npm の実行時依存パッケージはありません）
 - Access ファイルを解析する場合: Windows と Microsoft Access
   - Access がない環境でも、JSON 解析資料か合成サンプルで操作を試せます。
 
@@ -45,7 +45,7 @@ npm start
 2. **移行対象を選択**: 移したいフォーム・帳票・ページを選びます。
 3. **利用形態を確認**: 人数、場所、通信、同時編集、権限、既存Accessとの共存を答えます。
 4. **影響を確認**: 依存関係を確認し、移行先を選びます。
-5. **計画を作成**: 草案を確認し、`access-migration-plan.md` / `access-migration-plan.json` を保存します。
+5. **計画を作成**: 草案と画面内の業務フロー候補図・ER図を確認し、`access-migration-plan.md` / `access-migration-plan.json` を保存します。
 
 ### 出力ファイルの使い方
 
@@ -56,7 +56,7 @@ npm start
 
 ### 図のサンプル
 
-下図は合成サンプルから出力した例です。業務手順を確定した図ではなく、取得できた依存候補とテーブル関連を示します。
+下図は合成サンプルから出力した例です。アプリ画面にも両方の図を表示します。業務手順を確定した図ではなく、取得できた依存候補とテーブル関連を示します。
 
 ![合成サンプルの業務フロー候補図](docs/images/mermaid-flow-sample.png)
 
@@ -74,6 +74,22 @@ npm run test:native   # Windows + Access 環境で合成ファイルを作って
 ```
 
 ブラウザ試験（`python -X utf8 tests/browser-flow.py`）を動かすには、別途 Python、Playwright、Chromium が必要です。
+
+## Windows デスクトップ版（開発中）
+
+Windows版はRust/Tauri 2で専用ウィンドウを開き、既存のHTML/CSS/JavaScript画面をWebView2で表示します。解析・依存分析・計画生成はRust側で処理し、Accessの構造抽出には `scripts/export-access.ps1` と `scripts/vba-analysis.ps1` を同梱してWindows PowerShell 5.1から呼び出します。Node.jsのNode runtimeはデスクトップ版の実行時依存にしません。
+
+開発にはWindows 10/11 x64、Rust stable MSVC、Visual Studio C++ Build Tools、WebView2 Runtimeが必要です。初回インストーラーはNSISのユーザー単位 `-setup.exe` を作る設定です。WebView2 Evergreen RuntimeがないPCではインストール時にMicrosoftから取得するため、その時点でネット接続が必要です。Accessファイルの解析には対象PCのデスクトップ版Microsoft Accessが必要で、Access Runtimeだけの構成は未確認です。
+
+```powershell
+npm run desktop:dev
+npm run test:rust
+npm run desktop:build
+```
+
+`npm` を使わない場合は、リポジトリのルートで `cargo tauri dev`、`cargo test --manifest-path src-tauri/Cargo.toml`、`cargo tauri build` を実行します。
+
+インストーラーは `src-tauri/target/release/bundle/nsis/` に出力されます。署名証明書は設定していないため、生成物は未署名です。公開配布前に対象端末でインストール、起動、WebView2表示、計画の保存、COM解析、中止・一時ファイル削除を確認してください。
 
 ## 制約
 
@@ -95,4 +111,4 @@ npm run test:native   # Windows + Access 環境で合成ファイルを作って
 
 ## ライセンス
 
-未定です。現時点では LICENSE ファイルがないため、OSS ライセンスは付与されていません。
+このプロジェクトは [Apache License 2.0](LICENSE) のもとで提供します。Mermaid Tinyとそのバンドル依存のライセンス・著作権表示は [THIRD_PARTY_NOTICES.txt](public/vendor/THIRD_PARTY_NOTICES.txt) と同じディレクトリのライセンス文書に記載しています。

@@ -1,4 +1,18 @@
-import { analyzeSelection, recommendTargets } from '/modules/domain.mjs';
+import { renderDiagram } from './plan-diagrams.mjs';
+
+globalThis.mermaid?.initialize({
+  startOnLoad: false,
+  securityLevel: 'strict',
+  suppressErrorRendering: true,
+  maxTextSize: 30000,
+  maxEdges: 1000,
+  flowchart: { htmlLabels: false },
+  theme: 'base',
+  themeVariables: {
+    primaryColor: '#f4dcdc', primaryTextColor: '#292b30', primaryBorderColor: '#b51f2b',
+    lineColor: '#6b252b', secondaryColor: '#fff', tertiaryColor: '#f5f3f0', fontFamily: 'system-ui'
+  }
+});
 
 const STEPS = ['データベースを解析', 'フォーム・ページ・帳票を選択', '利用形態を確認', '影響を確認', '計画を作成'];
 const KIND = { table: 'テーブル', query: 'クエリ', form: 'フォーム', page: 'ページ', report: '帳票', macro: 'マクロ', module: 'モジュール', external: '外部参照' };
@@ -13,8 +27,8 @@ const state = {
   selected: new Set(), query: '', kind: 'all',
   usage: { users: null, concurrentEditing: false, location: null, offlineRequired: false, permissions: null, coexistence: 'undecided' },
   targetId: null, notes: '',
-  analysis: null, plan: null, markdown: '',
-  runToken: 0, cancelCtl: null, notice: '',
+  analysis: null, targets: [], analysisToken: 0, plan: null, markdown: '',
+  runToken: 0, cancelCtl: null, activeImportId: null, notice: '',
   measured: null, progressUnavailable: false, fileIndex: 0, fileTotal: 0,
   step: 1, maxStep: 1, busy: '', error: '', errorProgress: '', planError: ''
 };
@@ -57,7 +71,10 @@ function sourceNote() {
 
 async function api(path, init) {
   let response;
-  try { response = await fetch(path, init); }
+  const headers = new Headers(init?.headers ?? {});
+  const token = document.querySelector('meta[name="access2future-token"]')?.content;
+  if (token) headers.set('X-A2F-Token', token);
+  try { response = await fetch(path, { ...init, headers }); }
   catch (error) {
     if (error?.name === 'AbortError') throw error; // 中止は正常な流れなので、接続エラーの文言に置き換えない
     throw new Error('ローカルサーバーに接続できません。起動状態を確認して再度お試しください。');
@@ -74,7 +91,7 @@ function setInventory(inventory, origin) {
   state.origin = origin;
   state.byId = new Map(inventory ? inventory.assets.map((asset) => [asset.id, asset]) : []);
   state.selected = new Set();
-  state.plan = null; state.analysis = null; state.targetId = null;
+  state.plan = null; state.analysis = null; state.targets = []; state.analysisToken++; state.targetId = null;
   state.maxStep = 1;
 }
 const chosenSlots = () => ['front', 'back'].filter((slot) => state.slots[slot]);
@@ -106,6 +123,7 @@ async function analyzeFile(file, signal) {
     return api('/api/inventory', { method: 'POST', headers: JSON_HEADERS, body, signal });
   }
   const requestId = crypto.randomUUID();
+  state.activeImportId = requestId;
   const token = state.runToken;
   const pollingController = new AbortController();
   let polling = true;
@@ -139,13 +157,17 @@ async function analyzeFile(file, signal) {
   } catch (error) {
     if (!signal.aborted && token === state.runToken) { clearTimeout(timer); await absorb().catch(() => {}); } // 失敗時にサーバーが保持した最後の実測値を取り込む
     throw error;
-  } finally { stop(); signal.removeEventListener('abort', stop); }
+  } finally {
+    stop(); signal.removeEventListener('abort', stop);
+    if (state.activeImportId === requestId && !signal.aborted) state.activeImportId = null;
+  }
 }
 async function runAnalysis() {
   if (state.busy || !needsRun()) return; // 反復クリックと、することがない再実行の防止
   const token = ++state.runToken;
   const ctl = new AbortController();
   state.cancelCtl = ctl;
+  state.activeImportId = null;
   state.measured = null; state.progressUnavailable = false;
   state.error = ''; state.errorProgress = ''; state.notice = '';
   state.busy = 'ファイルを解析しています…';
@@ -200,16 +222,38 @@ async function runAnalysis() {
 async function cancelAnalysis() {
   const ctl = state.cancelCtl;
   if (!ctl) return;
+  const importId = state.activeImportId;
   state.cancelCtl = null; // 二重の中止要求を防ぐ
   ctl.abort();
   state.runToken++; // 中止した解析の遅い成功・失敗が、あとの状態を上書きしないようにする
   state.busy = '解析の中止を完了しています…'; // 中止処理の応答まで、進行中の扱いを維持する
   render();
   try {
-    await api('/api/import/cancel', { method: 'POST' }); // 応答200は成功。cancelled:falseは「実行中のnativeジョブなし（既に終了・JSONのみ・切断で停止済み）」という正常な完了
-    state.notice = '解析を中止しました。選んだファイルは残っています。「解析開始」でもう一度解析できます。';
+    const result = await api('/api/import/cancel', { method: 'POST', headers: importId ? { 'X-Import-Id': importId } : {} });
+    state.notice = !importId || result.cancelled
+      ? '解析を中止しました。選んだファイルは残っています。「解析開始」でもう一度解析できます。'
+      : '解析はすでに終了していました。選んだファイルは残っています。「解析開始」でもう一度解析できます。';
   } catch (error) {
     state.error = `解析の中止に失敗しました: ${error.message}`; // エラー時だけ失敗として示す
+    if (importId) {
+      try {
+        const snapshot = await api(`/api/import/progress?requestId=${encodeURIComponent(importId)}`);
+        const phases = ['preparing', 'enumerating', 'analysing', 'finishing'];
+        const { completed, total, phase } = snapshot ?? {};
+        const valid = snapshot?.requestId === importId && phases.includes(phase)
+          && Number.isSafeInteger(completed) && completed >= 0
+          && (total === null ? completed === 0 : Number.isSafeInteger(total) && total >= completed);
+        const previous = state.measured;
+        if (valid && (!previous || (completed >= previous.completed
+          && (previous.total === null || previous.total === total)
+          && phases.indexOf(phase) >= phases.indexOf(previous.phase)))) {
+          state.measured = { completed, total, phase };
+        }
+      } catch {}
+    }
+    state.errorProgress = failedProgressText(state.measured);
+  } finally {
+    state.activeImportId = null;
   }
   for (const slot of chosenSlots()) state.slots[slot].inv = null; // 未解析状態に戻す（Fileは保持）
   setInventory(null, null);
@@ -255,9 +299,27 @@ function show(step) {
   window.scrollTo(0, 0);
 }
 
-function computeAnalysis() {
-  try { state.analysis = analyzeSelection(state.inventory, [...state.selected]); state.error = ''; }
-  catch (error) { state.analysis = null; state.error = `影響を計算できません: ${error.message}`; }
+function releaseDiagramUrls() {
+  for (const container of document.querySelectorAll('.diagram-canvas[data-object-url]')) {
+    URL.revokeObjectURL(container.dataset.objectUrl);
+    delete container.dataset.objectUrl;
+  }
+}
+
+async function computeAnalysis() {
+  const token = ++state.analysisToken;
+  if (!state.inventory || !state.selected.size) { state.analysis = null; state.targets = []; state.error = ''; render(); return; }
+  state.analysis = null; state.targets = []; state.error = '';
+  const selectedIds = [...state.selected];
+  try {
+    const result = await api('/api/analyze', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ inventory: state.inventory, selectedIds, usage: state.usage }) });
+    if (token !== state.analysisToken || selectedIds.some((id) => !state.selected.has(id)) || selectedIds.length !== state.selected.size) return;
+    state.analysis = result.analysis; state.targets = result.targets; state.error = '';
+  } catch (error) {
+    if (token !== state.analysisToken) return;
+    state.analysis = null; state.targets = []; state.error = `影響を計算できません: ${error.message}`;
+  }
+  render();
 }
 
 async function loadPlan() {
@@ -338,6 +400,7 @@ function renderActions() {
 }
 
 function render() {
+  if (state.step !== 5 || !state.plan) releaseDiagramUrls();
   renderChrome();
   const main = $('main');
   const aside = $('aside');
@@ -461,16 +524,17 @@ function renderList() {
 }
 function toggle(id, on) {
   if (on) state.selected.add(id); else state.selected.delete(id);
-  state.plan = null;
+  state.plan = null; state.analysis = null; state.targets = []; state.analysisToken++;
   if (!state.selected.size) state.maxStep = Math.min(state.maxStep, 2);
   renderList(); renderAside(); renderActions(); renderChrome();
   [...document.querySelectorAll('#list input[type="checkbox"]')].find((input) => input.dataset.assetId === id)?.focus({ preventScroll: true });
+  if (state.selected.size) void computeAnalysis();
 }
 function renderAside() {
   const body = $('aside-body');
   if (!state.selected.size) { fill(body, h('p', { class: 'muted' }, 'フォーム・ページ・帳票を選ぶと、共有する資産と未選択の機能への影響をここに表示します。')); return; }
-  let analysis;
-  try { analysis = analyzeSelection(state.inventory, [...state.selected]); } catch (error) { fill(body, alertBox(error.message)); return; }
+  const analysis = state.analysis;
+  if (!analysis) { fill(body, h('p', { class: 'muted' }, state.error || '依存関係と影響を計算しています…')); return; }
   fill(body,
     block('選択したフォーム・ページ・帳票が使う資産', analysis.dependencyIds.map(nameWithKind), '選択した資産以外の依存は確認されていません。'),
     block('未選択の機能への影響', analysis.impactedIds.map((id) => `${nameWithKind(id)}は、選択範囲と共有する資産に依存します。`), '取得できた定義では、未選択の機能への影響は見つかっていません。'),
@@ -511,7 +575,7 @@ function step3(main) {
 function step4(main) {
   if (!state.analysis) { fill(main, heading('依存関係と影響を確認'), alertBox(state.error || '選択を確認してください。')); return; }
   const a = state.analysis;
-  const targets = recommendTargets(state.inventory, state.usage, a);
+  const targets = state.targets;
   if (state.targetId && !targets.some((target) => target.id === state.targetId)) state.targetId = null;
   const uncertain = [...a.unresolved, ...a.blockers];
   fill(main,
@@ -543,6 +607,12 @@ function save(name, text, type) {
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+async function renderPlanDiagrams(plan) {
+  for (const id of ['flow', 'er']) {
+    const container = document.querySelector(`[data-diagram="${id}"] .diagram-canvas`);
+    if (container && state.plan === plan && state.step === 5) await renderDiagram(container, plan.diagrams?.[id] ?? '', id);
+  }
+}
 function step5(main) {
   const plan = state.plan;
   if (!plan) { fill(main, heading('移行計画'), status(), alertBox(state.planError, loadPlan)); return; }
@@ -554,6 +624,9 @@ function step5(main) {
     h('div', { class: 'save' },
       h('button', { type: 'button', class: 'btn', onclick: () => save('access-migration-plan.md', '\uFEFF' + state.markdown, 'text/markdown;charset=utf-8') }, 'Markdownを保存'),
       h('button', { type: 'button', class: 'btn', onclick: () => save('access-migration-plan.json', JSON.stringify(plan, null, 2), 'application/json;charset=utf-8') }, 'JSONを保存')),
+    h('section', { class: 'block diagrams', 'aria-label': '依存関係の図' }, h('h3', {}, '依存関係の図'),
+      ...[['flow', '業務フロー候補図'], ['er', 'ER図']].map(([id, label]) => h('figure', { class: 'diagram-panel', 'data-diagram': id },
+        h('figcaption', {}, label), h('div', { class: 'diagram-canvas', 'aria-live': 'polite' })))),
     block('注意事項', plan.notices, ''),
     block('移行先候補', [`${plan.target.label}（${FIT[plan.target.fit]}）`, ...plan.target.reasons], ''),
     h('section', { class: 'block' }, h('h3', {}, '要件（未承認）'),
@@ -566,6 +639,7 @@ function step5(main) {
     block('検証手順', plan.validationSteps, ''),
     block('未解決事項', plan.unresolved.map(issueLine), '未解決事項はありません。'),
     block('リスク', plan.risks, ''));
+  void renderPlanDiagrams(plan);
 }
 
 // ---- 起動 ----

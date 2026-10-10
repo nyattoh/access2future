@@ -30,7 +30,6 @@ const query=i.assets.find(a=>a.id==='query:OrdersOverview'); assert.ok(query.dep
 assert.ok(i.relations.some(r=>r.from==='table:Orders'&&r.to==='table:Customers'&&r.enforced));
 assert.equal(i.assets.find(a=>a.id==='table:UnavailableExternal').status,'unsupported');
 assert.ok(i.assets.every(a=>a.rowCount===undefined)); assert.ok(!JSON.stringify(i).includes('DATABASE=')); assert.ok(!/[A-Z]:\\\\/i.test(JSON.stringify(i)));
-// 実測進捗: 分母は実際の資産数、completed は単調、最後は finishing で completed=total。
 assert.ok(progress.length>=2, 'at least preparing and finishing snapshots');
 assert.deepEqual(progress[0],{phase:'preparing',completed:0,total:null});
 for (const s of progress) {
@@ -45,11 +44,25 @@ assert.equal(last.phase,'finishing'); assert.equal(last.completed,i.assets.lengt
 console.log('NATIVE_SYNTHETIC_PASS',JSON.stringify({assets:i.assets.length,relations:i.relations.length,limitations:i.limitations.length,progressEvents:progress.length,last:`${last.completed}/${last.total}`}));
 '@ | node --input-type=module
     if ($LASTEXITCODE -ne 0) { throw 'Native assertions failed.' }
+    $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
+    if (-not $cargoCommand) {
+      $cargoPath = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
+      if (Test-Path -LiteralPath $cargoPath) { $cargoCommand = Get-Item -LiteralPath $cargoPath }
+    }
+    if (-not $cargoCommand) {
+      Write-Output 'RUST_NATIVE_NOT_RUN no Rust toolchain found'
+    } else {
+      $env:ACCESS2FUTURE_SYNTHETIC_SAMPLE = $sample
+      $cargoExecutable = if ($cargoCommand.Source) { $cargoCommand.Source } else { $cargoCommand.FullName }
+      & $cargoExecutable test --manifest-path (Join-Path $root 'src-tauri\Cargo.toml') rust_access_native_smoke -- --ignored --nocapture
+      if ($LASTEXITCODE -ne 0) { throw 'Rust native assertions failed.' }
+    }
   } finally { Pop-Location }
   if ((Get-SampleHash $sample) -ne $before) { throw 'Source changed.' }
   Write-Output 'SOURCE_HASH_UNCHANGED'
 } finally {
   Remove-Item Env:ACCESS_SYNTHETIC_SAMPLE -ErrorAction SilentlyContinue
+  Remove-Item Env:ACCESS2FUTURE_SYNTHETIC_SAMPLE -ErrorAction SilentlyContinue
   $resolved=[IO.Path]::GetFullPath($directory); $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
   if ($resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $directory -Recurse -Force }
 }

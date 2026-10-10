@@ -1,0 +1,14 @@
+Third-party components bundled in public/vendor/mermaid.tiny.js
+
+Mermaid Tiny 12.1.0
+Copyright (c) 2014 - 2022 Knut Sveidqvist
+Licence: MIT. See public/vendor/mermaid-LICENSE.txt.
+
+DOMPurify 3.4.12
+Copyright Cure53 and other contributors.
+The bundled code is dual-licensed under Apache-2.0 OR MPL-2.0. This distribution uses the Apache-2.0 option; see the project LICENSE. The MPL-2.0 licence text is also included as licenses/DOMPurify-MPL-2.0.txt.
+
+Lodash 4.18.1 (custom build)
+Copyright OpenJS Foundation and other contributors.
+Based on Underscore.js 1.8.3, copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors.
+Licence: MIT. See licenses/lodash-MIT.txt.

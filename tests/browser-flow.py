@@ -24,7 +24,7 @@ with sync_playwright() as runner:
             page.goto(BASE, wait_until="networkidle")
             expect(page.get_by_role("heading", name="データベースを解析", exact=True)).to_be_visible()
             page.get_by_role("button", name="合成サンプルを試す", exact=True).click()
-            expect(page.get_by_role("heading", name="フォーム・ページを選択", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="フォーム・ページ・帳票を選択", exact=True)).to_be_visible()
             expect(page.get_by_text("合成サンプル", exact=True).first).to_be_visible()
             expect(page.get_by_role("button", name="利用形態へ", exact=True)).to_be_disabled()
             page.get_by_role("checkbox", name="受注入力", exact=True).check()

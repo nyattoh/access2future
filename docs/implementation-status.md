@@ -1,5 +1,17 @@
 # Aの実装・検証結果
 
+## 最新状態 2026-10-11
+
+Rust/TauriのWindows release exeに、業務フロー候補図とER図をアプリ内表示する変更を追加した。ローカル同梱のMermaid Tiny 12.1.0を使用し、Node 64件、Rust 50件合格、native専用Rust試験1件除外、npm audit 0件を確認した。Synthetic browser flowとNSIS install smokeも合格。計画画面はNode Web adapterで3サイズを目視確認した。インストールしたTauri appから静的資産とAPIを確認し、NSIS uninstallも成功した。Computer Use native pipeが利用できず、Tauri WebView2の実ウィンドウ画像は未取得。Commit `7220960`はpush済みで、[Draft PR #3](https://github.com/nyattoh/access2future/pull/3)はGrok独立reviewを待つ。公開releaseは未作成。
+
+### 2026-10-11 独立レビュー後の修正・再検証
+
+Grok 4.7 (`runtimeMode=auto`) のレビューは、起動時のmain window二重作成、cancel waiterの完了取りこぼし、一時ファイル削除失敗の見落としをP1として指摘した。起動時の問題はレビュー回収前にconfig側のwindow定義を削除して解消し、実exeを起動して再確認した。cancel waiterは消費される結果ではなくwatch完了状態を共有し、終了済みjobの結果を複数の待機者から読めるようにした。削除エラーはworker結果に優先して伝え、HTTP cancelに解析IDを付けて一致した解析だけを中止し、終了後に記録された後処理エラーも同じIDで報告する。画面は実際の`cancelled`値に応じて完了通知を分ける。
+
+TDD記録: `.local/autonomous-run-20261011/evidence/cancel-id-red.log`では後処理エラーのID照合テストが失敗し、修正後の`cancel-id-green.log`はpass。`cancel-waiters-green.log`は複数waiter、`cancel-cleanup-api-red.log` / `cancel-cleanup-api-green.log`は削除失敗応答を検証。`cancel-mismatched-id-green.log`はID不一致時にactive jobを止めないことを確認。`npm test` 63/63、Rust workspace 49 passed / 1 ignored、format check、合成native Access smoke (6 assets, source hash unchanged)、ブラウザー合成シナリオ7項目を再実行してpass。release exe再build後、起動・loopback token (tokenなし403)・11資産demo・帳票選択plan・Mermaid flowchart/ERを確認。NSIS installerとnative Tauriの画面キャプチャ、実Access資料の確認は未実施。
+
+Grokのcompleted二次レビューは、上記P1の解消を確認したうえでUIのP2を2件指摘した。import IDなしのJSON/merge中止通知を正しくし、ID付きAccess cancelがエラーになった場合は最終進捗snapshotを1回取得し検証して表示するよう修正した。回帰 browser testは9 scenario pass。別個のTDD RED/GREEN記録は`.local/autonomous-run-20261011/evidence/ui-cancel-json-notice-red.log` / `ui-cancel-json-notice-green.log`、`ui-cancel-progress-red.log` / `ui-cancel-progress-green.log`。JSON/merge中止通知と、進捗4/10から最終8/10・後処理への更新を合成データで確認した。`npm-p2-final.log`は63/63。Access COMの実取消・ファイル削除失敗は実Accessで誘発していない。
+
 ## 2026-10-07 利用者承認後の追加範囲
 
 利用者は帳票の直接選択、「ページ」= Access Data Access Pages、取得可能なVBAソースの抽出・静的依存解析・リファクタリング計画の提示を決定した。これらはA（移行計画を作る版）の範囲内である。過去節にある「未決/未対応」はその時点の履歴として読み、現在の決定は本節とREADME、`docs/handover.md` §13を参照する。
@@ -97,3 +109,47 @@ VBA・動的SQLの完全解釈、Access全バージョン・暗号化・破損�
 同じ失敗を合成frontend dummyで再現。PowerShellはexit0、JSON出力は有効。Node側のdomain検証で hasCodeModule=false と procedureNames=[] / procedureCount=0 が併存し拒否されることを特定した。コードモジュールなしのフォーム/帳票にこの空要約が24件含まれる。空の手続き一覧・0件は許可し、正の要約値やmoduleTypeは引き続き拒否するよう変更。
 
 新規importer回帰テストRED→GREEN。修正後の同一dummified frontend importは127 assets / 6 relations / 220 limitations / no-code assets24 / 82 progress events / finishing127/127で成功。npm test 60/60、native synthetic smoke 6/6、PowerShell dependency39 assertions pass。実ユーザーMDBの再試行は未実施。修正版ローカルアプリは稼働中、HTTP200。
+## 2026-10-11 Rust/Tauri Windows continuation
+
+製品ゴールはAの移行計画版。Windows向けの専用WebView2画面、Rustの解析・計画API、既存PowerShell 5.1 Access COM helperを組み合わせた。行データの移行、生成コード、公開、push、PRは行っていない。私的Access原本とその行データは開かず、合成サンプルだけで試験した。
+
+`src-tauri/domain-core/` にNode領域処理から移植した6関数を統合。`src-tauri/src/http.rs` は起動ごとのtoken、Host/Origin、CSP、JSON入力の検査を持ち、`src-tauri/src/access.rs` は既存PowerShell helperを呼び出す。Web版はNode adapter経由で同じJSON APIを使う。
+
+TDDで2つの実装欠陥を再現して修正した。Rust正規表現のUnicode単語境界が、日本語の直後にある接続情報やURLを除去しないケースをテストし、JSと同じASCII境界にした。PowerShell helperが返す`ACCESS_EXTRACTION_FAILED`をRust側が`ACCESS_UNAVAILABLE`へ誤変換していたため、worker error codeを分類して保つようにした。別の実行試験ではTauri設定とsetup hookの両方が`main`ウィンドウを作り、起動exeがexit 101となった。設定から重複定義を除いた。
+
+最終確認は`npm test` 63/63、`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`成功、`cargo test --manifest-path src-tauri/Cargo.toml --workspace` 43 passed / 1 ignored、`npm run test:native`合成Access 6 assets / 1 relation / 5 limitations、Rust native smoke合格、入力SHA256不変。`python -X utf8 tests/browser-flow.py http://127.0.0.1:7332`は1440x900、1024x1366、390x844で合格しJavaScript console error 0だった。
+
+`npm run desktop:build -- --no-bundle`で`src-tauri/target/release/access2future.exe`を構築し、重複窓修正後の起動・loopback APIを試験した。`GET /`は200、tokenのない`/api/health`は403、token付きhealthはlocal、合成demoは11 assets、report選択のplan応答に`hand_over`、Mermaid flowchart、ER図が含まれた。API smokeは合成JSONのみで実行し、プロセスは試験後に終了した。
+
+NSISインストーラーは未生成。環境に`makensis.exe`がなく、新しいソフトやビルドツールを入れない指示に従った。WebView2ランタイムとWindows/Rust/MSVCは`cargo tauri info`で確認した。no-bundle exeは開発元リポジトリからのlocal smoke用で、配布可能なインストーラーではない。
+
+画面証拠はGit除外`.local/autonomous-run-20261011/evidence/`に保存した。Node Web版を合成データで操作して7 PNGを開いて確認し、91.4秒のMP4を作成して再生時間と再生位置の進行を確認した。3 viewport browser-flowは物理端末での試験ではない。Tauri native window自体の画像はComputer Use native pipeが利用不能だったため取得できず、native UIの目視検証は未実施。代わりにTauri release exeの起動とlocal APIを確認した。
+
+独立コードレビューはGrok 4.7で進行中。CursorのGemini 3.8 FlashとGemini 3.7 Flashはprovider turn開始前に失敗した。Claude/OpenRouterのAPI契約レビューは以前に402 insufficient creditsで失敗しており、課金回避の再試行はしていない。Antigravityのlive catalogueには実行可能modelがなかった。bench ledgerは`no_t3_models_in_ledger`を返し、live T3 catalogueからGrokを選択した。実task IDは`docs/routing.md`。
+
+今回の連続実行は8時間に達していない。scheduler list呼び出しはservice errorとなり、新しいtimerは作成していない。前回の8時間予約は2026-10-06記録でdisabled確認済み。Grok taskの最終状態、独立指摘、NSIS環境の用意、Tauri native screenshotが次の作業である。
+
+### 2026-10-11 継続作業の最終更新
+
+上記記録後、Grok 4.7の二次レビュー task `node:delegated-task:command%3Amcp%3A9e7f6cad-0500-43e8-9962-72f9dbaf6eee%3Adelegate-task%3Aaccess2future-grok-cancellation-fix-review-20261011-r2` がcompletedとなった。既出P1の解消を確認し、新たに示したUI P2 2件を修正した。Access import IDのないJSON/merge中止ではローカル中止を知らせ、ID付きcancelがcleanup errorを返した場合は同じIDの進捗snapshotを取得し、検証して件数・段階を残す。
+
+TDD RED/GREENは `.local/autonomous-run-20261011/evidence/ui-cancel-json-notice-red.log` / `ui-cancel-json-notice-green.log` と `ui-cancel-progress-red.log` / `ui-cancel-progress-green.log`。T3 browser regression 9 scenario pass: JSONとmergeの中止通知、Access ID伝播、cleanup error後の進捗4/10から8/10 (80%)・後処理表示を合成モックで確認した。Node test 63/63、`node --check`対象JS両方pass。実Accessでのcleanup失敗、NSIS installer、Tauriネイティブ画面撮影は未実施。最終review結果は `.local/autonomous-run-20261011/evidence/grok-round2-final.md`。
+
+UI修正を含めて `npm run desktop:build -- --no-bundle` を再実行し、release exeの起動後に `/app.mjs` が修正後の中止表示・ID付き最終進捗取得コードを配信すること、API tokenなし403、health local、合成demo 11 assets、帳票planとMermaid図を確認した。証拠は `tauri-build-p2-final.log` と `tauri-exe-live-smoke-p2-final.json`。
+合成ブラウザー画面でcleanup failureと最終進捗8/10 (80%)を同時表示したPNG `evidence/07-20261011-cleanup-failure-progress.png` を撮影し、開いて内容を目視確認した。これはNode Web adapterの画面であり、Tauriネイティブ画面ではない。
+
+### 2026-10-11 Mermaid図の画面内表示とWindows配布試験
+
+ユーザーの追加要件により、移行計画画面に業務フロー候補図とER図を表示する。MarkdownとJSONにも従来どおりMermaidソースを保存する。図の描画には外部通信を使わず、MITライセンスのMermaid Tiny 12.1.0を`public/vendor/mermaid.tiny.js`として同梱する。フロー図とER図に必要な機能を含み、KaTeX数式機能は含まない。
+
+TDDでは画面の合成計画にSVGがないためbrowser testが失敗したことを確認し、ライブラリ描画、CSP対応Blob画像、altテキスト、エラー時のソース表示を追加した。全Mermaidを含む最初の候補bundleにはKaTeX 0.16.47が残っており、npmのoverridesでは既成bundleを更新できなかったため不採用とした。Mermaid Tinyへ変更後に描画とNSIS buildをやり直した。
+
+確認結果: `npm test`は64件すべて合格。`npm audit`は脆弱性0件。`cargo fmt --check`は合格。Rust workspaceは50件合格し、native専用1件を除外した。Rustの静的資産試験で`app.mjs`と`plan-diagrams.mjs`のJavaScript MIME型を確認した。T3 browser flowは合成計画の10項目が合格。renderer testは描画、altテキスト、無効なソースの表示を確認した。1280×800のPC、820×1180のタブレット、390×844のスマホで2つの図を表示し、文書幅はviewport幅を超えなかった。画像は `evidence/11-20261011-mermaid-tiny-desktop.png`、`12-20261011-mermaid-tiny-tablet.png`、`13-20261011-mermaid-tiny-phone.png`。
+
+NSIS current-user installerは3,767,255 bytes、SHA256 `828AA7F37224D05354ECE7F44FB3BDDF04368F5B81411DA366B3DFEBE2C62421`。合成データだけを使って一時ディレクトリに導入し、実行ファイルがloopback page、vendor asset、tokenなし403、11資産demo、flow/ER planとMarkdown Mermaid fencesを返すことを確認した。Uninstaller exit code 0、install directory removed。アプリはこの試験後に停止し、永続インストールはない。Install reportは `.local/autonomous-run-20261011/evidence/nsis-mermaid-tiny-smoke.json`。
+
+Computer Useの実ウィンドウ撮影は `Computer Use native pipe is unavailable: failed to connect native pipe: 指定されたファイルが見つかりません。 (os error 2)` で不可。表示の目視確認はNode Web adapterの同一frontendで行い、WebView2 native画面の画像確認とは区別する。署名・公開release、Git push、Draft PRはこの記録時点で未実施。ユーザーはpushとPR/releaseを希望し、pushとDraft PR準備を許可済み。案件規則に沿い、PRをDraftで作成してGitHub review待ちとする。
+
+### 2026-10-11 Apache-2.0選択
+
+利用者は初回公開版のプロジェクトライセンスとしてApache-2.0を選択した。公式Apache FoundationのLICENSE-2.0本文を`LICENSE`へ配置し、README、npm package、Rust application/domain-core manifestsへ`Apache-2.0`識別子を記載。Tauri NSIS resourcesにプロジェクトLICENSEとMermaid TinyのMITライセンスを追加し、合成データでインストール先の配置・起動・API・図・アンインストールを再確認した。Grok r4の指摘を受け、DOMPurify 3.4.12とLodash 4.18.1を含むバンドル内ソフトウェアの著作権表示とMPL/MIT本文も追加してNSIS resourcesへ同梱した。最終installerは3,782,576 bytes、SHA256 `1C59DD7C1C912DAF0DC9263013447114DD5E6432150E74EA208F5A552EF75F8D`。Node 66 tests、Rust workspace、0脆弱性、最終NSIS smokeに合格。公開releaseはDraft PR #3のreview/merge後まで保留し、Windows installerは未署名のまま。WebView2ネイティブ画面でBlob保存操作の確認は未実施。

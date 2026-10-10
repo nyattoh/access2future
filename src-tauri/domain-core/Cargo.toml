@@ -1,0 +1,15 @@
+[package]
+name = "domain-core"
+version = "0.1.0"
+license = "Apache-2.0"
+edition = "2021"
+description = "Access2Future A-version migration planner domain core. Pure JSON-in/JSON-out functions ported from src/domain.mjs."
+publish = false
+
+[lib]
+name = "domain_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
