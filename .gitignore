@@ -24,3 +24,7 @@ Thumbs.db
 node_modules/
 test-results/
 artifacts/screenshots/
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/domain-core/target/
+/src-tauri/domain-core/Cargo.lock

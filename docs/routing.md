@@ -224,3 +224,36 @@ tests/access-import.test.mjsへVBAなしフォームの空要約を受け入れ�
 - pi / zai/glm-5.3 / thinking high: node:delegated-task:command%3Amcp%3A38731836-3a8a-48ae-a9b0-c719c3bc5031%3Adelegate-task%3Aaccess2future-postprocess-diagnosis-glm-20261007-r1 — completed, read-only.
 - Claude / claude-sonnet-5-5 / effort high, contextWindow 200k: node:delegated-task:command%3Amcp%3A38731836-3a8a-48ae-a9b0-c719c3bc5031%3Adelegate-task%3Aaccess2future-postprocess-domain-diagnosis-claude-20261007-r1 — completed, read-only.
 - Cursor / grok-4.7 / reasoning_effort high: node:delegated-task:command%3Amcp%3A38731836-3a8a-48ae-a9b0-c719c3bc5031%3Adelegate-task%3Aaccess2future-postprocess-http-ui-diagnosis-grok-20261007-r1 — completed, read-only.
+## 2026-10-11 Rust/Tauri Windows continuation
+
+**作業範囲。** Windows Tauri/WebView2 release binaryの構築、Rust domain/API統合、合成AccessとNode adapterの試験、画面・記録、独立レビュー。Aの移行計画版を維持し、私的Access原本・行データ、code generation、data migration、push、PR、公開には触れない。
+
+**実行環境。** Workspace `D:\develop\works\access2future`、branch `devin/20261007-mermaid-plan-diagrams`、HEAD `466782c2e59f45c866548840852469e059c5666a`。live T3 catalogue取得は2026-10-10 15:27 UTC。providerはcodex/gpt-6-luna/medium、Pi/nvidia/z-ai/glm-5.3/thinking high、Grok/grok-4.7/reasoningEffort high、Cursor/Gemini 3.8 Flash/reasoning_effort highとGemini 3.7 Flash/effort highを試した。Grok review taskのみ開始済み。model identityとoptions keyはprovider固有の名前で記録する。
+
+**ルーティング判断。** `bench_ledger_candidates`は`no_t3_models_in_ledger`を返した。別providerへの課金やAPI keyの追加は行わず、live catalogueから独立reviewerを選択した。Grokはユーザー指定により`runtimeMode=auto`で起動した。ClaudeAgentによるAPI契約reviewは前回402 insufficient credits、今回再試行なし。Antigravityはprovider capabilityはあるがmodel listが空。Cursor Gemini 3.8 Flash / T3 task `node:delegated-task:command%3Amcp%3A9e7f6cad-0500-43e8-9962-72f9dbaf6eee%3Adelegate-task%3Aa2f-tauri-packaging-review-cursor-20261011-r1` とGemini 3.7 Flash / task `node:delegated-task:command%3Amcp%3A9e7f6cad-0500-43e8-9962-72f9dbaf6eee%3Adelegate-task%3Aa2f-tauri-packaging-review-cursor-20261011-r2` はどちらもprovider turn開始前にfailed。review本文やfindingはない。再試行はしない。
+
+**実装・TDD。** GLM second-round domain implementation task `node:delegated-task:command%3Amcp%3Af78cf1b5-f12e-49ef-837c-6145c49401bf%3Adelegate-task%3Aa2f-rust-domain-core-impl-20261010-r2` completed。Codexのred試験でRust/JSの日本語prefix secret/url境界の差異と、PowerShell `ACCESS_EXTRACTION_FAILED`からRust `ACCESS_UNAVAILABLE`への誤変換を再現し修正。Tauri release binaryの実行時にconfig/setup双方がmain windowを生成する欠陥もexit 101で発見し、設定の重複windowを削除した。
+
+**検証。** Node 63/63、Rust workspace 49 passed/1 ignored、fmt check pass、native synthetic sample 6 assets / 1 relation / 5 limitations、Rust native smoke pass、original sample SHA256 unchanged。Responsive browser-flowはdesktop 1440x900、tablet 1024x1366、phone 390x844でpass、console error 0、synthetic-only。局所release exe smokeはGET `/` 200、tokenなしAPI 403、tokenありhealth local、11-asset synthetic demo、report planに`hand_over` fieldとMermaid flowchart/ER図あり。
+
+**Buildの境界。** `npm run desktop:build -- --no-bundle`によりrelease exeを生成した。NSIS buildは`makensis.exe`未導入のため行わず、NSISもインストールしていない。これは個人PCへの配布成果物ではない。`cargo tauri info`でWindows 10.0.26300 x64、WebView2 154.0.4258.62、MSVC、Rust stable MSVCを確認。
+
+**画面記録。** `.local/autonomous-run-20261011/evidence/`に7 PNG / 929395 bytesと1 MP4 / 1701594 bytesを保存。MP4 duration 91.396733s、ブラウザvideo elementでreadyState 4、2.5秒の再生でcurrentTimeが進むことを確認。PNGはNode web adapterの合成デモ画面でありTauri画面ではない。Computer Use初期化は`Computer Use native pipe is unavailable: failed to connect native pipe`で失敗した。native Tauri screenshotは未取得。
+
+**Grok review completed.** Task `node:delegated-task:command%3Amcp%3A9e7f6cad-0500-43e8-9962-72f9dbaf6eee%3Adelegate-task%3Aa2f-rust-tauri-review-grok-20261011-r1`は`grok-4.7` / `runtimeMode=auto` / completed。二重main windowは先にconfig修正済み。P1のcancel waiter競合とcleanup error誤報は `ImportJob` shared watch completion、解析ID付きcancel route/UI、cleanup error propagationで対応。RED/GREENと完了後再検証は`.local/autonomous-run-20261011/evidence/cancel-*`と`rust-workspace-final.log`に記録。domain coreのP1/P2なし。NSIS資材の構成上の指摘なし。VBA設計ビューがユーザーコードを実行しないという結論は未確認。NSIS生成・実Accessでの試験・Tauri UIキャプチャは未実施。provider-start failureだったCursor 2件は再試行していない。Grokは自動実行の指定どおりautoで起動。追加導入・課金・権限変更、実Access資料読込はなし。
+
+修正を対象としたread-only二次レビューはGrok 4.7 / high / `runtimeMode=auto`、T3 task `node:delegated-task:command%3Amcp%3A9e7f6cad-0500-43e8-9962-72f9dbaf6eee%3Adelegate-task%3Aaccess2future-grok-cancellation-fix-review-20261011-r2`でcompleted。前回の3 P1は解消済みと判定された。追加P2は、(1) import IDのないJSON/merge中止を「すでに終了」と表示する、(2) Access後処理失敗時の最終進捗値を画面に残さない、の2点。両方を`public/app.mjs`で修正した。TDD RED/GREENと9 scenario browser passは`.local/autonomous-run-20261011/evidence/ui-cancel-*-*.log`および`browser-upload-flow-final.json`に保存。終了時はtask completed、pending child runなし。provider inbox-helperの承認待ちは一時状態で、その後terminal resultを取得した。`grok-round2-final.md`に指摘・修正・検証境界を記録。
+
+このUI更新を含むrelease exeを再ビルドし、live smokeで埋め込み`/app.mjs`に両修正が入ったことを確認した。token、health、synthetic demo、plan/Mermaid APIも再確認。`tauri-build-p2-final.log`、`tauri-exe-live-smoke-p2-final.json`。
+
+## 2026-10-11 計画画面のMermaid描画とWindows配布
+
+**要件・承認。** ユーザーは計画画面にMermaid図を表示したいと明示し、依存候補図とER図を画面内描画に含めた。ユーザーはTauri管理のNSIS toolset利用、push、Draft PRの準備を許可し、GitHub releaseを希望した。実Access資料、実データ、データ移行、コード生成は範囲外。
+
+**設計判断。** Mermaid 12.1.0のfull IIFE bundleにKaTeX 0.16.47のコードが含まれることを確認した。npm overrideを使っても、配布bundle内のKaTeXは更新されなかった。公式Tiny bundleはflowchartとERに対応し、KaTeX数式描画を含まない。今回必要な2種類の図だけを使うため、MITライセンスとともにTinyを同梱した。画面ではSVGをBlob画像として描画し、CSPは`img-src`に`blob:`を追加した。`script-src`と`style-src`は`'self'`のままにした。NodeとTauriのCSPを揃えた。描画できない図はMermaidソースを`textContent`で表示する。画面を離れると画像URLを解放する。
+
+**TDDと検証。** 画面表示の回帰試験は、図がない状態で失敗した。描画処理を追加してからNode 64件、Rust 50件、browser flow 10項目が合格した。native専用Rust試験1件は除外した。npm auditは脆弱性0件。`node --check`と`cargo fmt --check`も通過した。1280×800のPC、820×1180のタブレット、390×844のスマホで2つの図を表示した。文書幅は画面幅を超えなかった。画像は`.local/autonomous-run-20261011/evidence/11-20261011-mermaid-tiny-desktop.png`、`12-20261011-mermaid-tiny-tablet.png`、`13-20261011-mermaid-tiny-phone.png`。
+
+**Windows packaging.** NSIS setupは3,767,255 bytes。SHA256は`828AA7F37224D05354ECE7F44FB3BDDF04368F5B81411DA366B3DFEBE2C62421`。一時フォルダーにユーザー単位で導入し、隠した状態でアプリを起動した。トップページ、tokenなしで403となるAPI、tokenありの合成デモを確認した。合成デモには11資産が含まれた。Mermaid Tinyの2,810,966 byteファイル、flow図、ER図、Markdown内のMermaid fenceも確認した。アンインストーラーは終了コード0を返し、試験用フォルダーを削除した。恒久インストールは残していない。結果は`.local/autonomous-run-20261011/evidence/nsis-mermaid-tiny-smoke.json`に記録した。
+
+**レビューと制限。** Cursor経由のGrok 4.7 reviewはprovider turnを開始できず、Claude Sonnet 5.5 reviewはAPI rate limitで開始できなかった。Pi GLM-5.3へfull bundleを対象にレビューを依頼したが、Tinyへの切替後に取り消した。最終diffはGrok 4.7へ`runtimeMode=auto`で再依頼中。Computer Use native screenshotはpipeを起動できず取得できなかったため、Node browser viewで共通frontendを目視確認した。Git push、PR、公開releaseはまだ実施していない。Draft PRを作り、GitHub reviewを待ってからreleaseを進める。

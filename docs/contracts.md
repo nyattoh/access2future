@@ -58,10 +58,18 @@ usersは `solo` / `team`、locationは `device` / `lan` / `remote`、permissions
 - `POST /api/import/cancel`: 進行中の取込みを中止し、worker終了と一時ファイルの削除後に `{cancelled:boolean}` を返す。実行中の処理がない場合はfalse。中止・削除を確認できない場合はエラー。
 - `POST /api/import`の任意ヘッダー`X-Import-Id`: UUID。画面はファイルごとに新しい値を作る。`GET /api/import/progress?requestId=<UUID>`は、そのIDの`{requestId,state,phase,completed,total}`だけを返す。stateはwaiting/running/completed/cancelled/failed、phaseはpreparing/enumerating/analysing/finishing。totalは列挙中null、その後は固定した資産数。名前・SQL・接続・パスは含めない。ID違い・件数逆行・不正値・取消後のcallbackは破棄する。分母は列挙後に固定した資産総数、分子は確認処理を終えた資産数で、割合に時間は使わない。全資産の確認が済むとphase=finishing（completed==total）になり、その後のクリーンアップ・HTTP応答が続く間もstate=runningのまま。失敗・時間切れ時はstate=failedとし、最後に確認できたphase/completed/totalを消さない（totalがnullなら未確定のまま）。画面は失敗後に最終スナップショットを1回取得し、エラー近くに残す。
 - `POST /api/inventory`: Inventory JSONを検証して返す。入力上限を設ける。
+- `POST /api/analyze`: `{inventory,selectedIds,usage}` を受け、Rust版では domain core から依存・影響候補と移行先候補を返す。Web版では同じJSON契約をNode adapterが実装する。
 - `POST /api/plan`: `{inventory,selectedIds,usage,targetId,notes}`。`{plan,markdown}` を返す。
 - `POST /api/merge`: `{inventories}`。ユーザーが明示的に取り込んだ構造資料だけを統合する。参照先のローカルパスに自動アクセスしない。
 - `public/` のファイルと `src/domain.mjs` の公開モジュールだけを配信。パス遡及を拒否する。
 - エラーを日本語で表示できる形にし、不正入力や取得不能を明示する。
+
+## Windows desktop: Tauri 2
+
+- `src-tauri/` はRust backendとWebView2 shell。ウィンドウはloopbackの一時ポートだけを開き、Host/Origin、起動ごとのtoken、CSPを検証する。
+- `src-tauri/domain-core/` はInventory検証、統合、依存分析、移行先候補、計画とMermaid/Markdown出力を担う。UI側JavaScriptは表示・入力とAPI呼出しに限る。
+- Access COMの抽出経路は `scripts/export-access.ps1` と `scripts/vba-analysis.ps1` をWindows PowerShell 5.1から起動する。Accessの行データを読まず、読み取り専用の一時コピーを使用し、進捗・取消・タイムアウトと一時ファイル削除を保つ。
+- 配布設定はx64、ユーザー単位NSIS `-setup.exe`、WebView2 Evergreen Bootstrapper。Node.jsはデスクトップ実行時に不要。署名や公開は含まない。
 
 ## Ownership
 
@@ -77,7 +85,7 @@ usersは `solo` / `team`、locationは `device` / `lan` / `remote`、permissions
 
 - 画像3枚とdocs/design/DESIGN.mdを基に、1440x900、1024x1366、390x844で作業の順序と配置を維持する。
 - 初期画面: 見出し「データベースを解析」、「ファイル1」「ファイル2」のAccess/JSON入力、「解析開始」「合成サンプルを試す」。どちらか1つだけでも可。選択・選び直し・削除では解析せず、結果を無効化する。明示的な開始後に個別に解析し、2つの場合はapi/merge。実ファイル・JSON・合成を区別する。処理中は中止以外の変更・移動を止める。
-- ステップ2: 見出し「フォーム・ページを選択」。検索・種別フィルタ、実際の資産から作るcheckbox（accessible nameはcaption/name）、選択数、未選択の影響説明、「利用形態へ」。未選択では次へをdisabledにする。表/行は本物のDOMで操作可能にする。
+- ステップ2: 見出し「フォーム・ページ・帳票を選択」。検索・種別フィルタ、実際の資産から作るcheckbox（accessible nameはcaption/name）、選択数、未選択の影響説明、「利用形態へ」。未選択では次へをdisabledにする。表/行は本物のDOMで操作可能にする。
 - ステップ3: 見出し「利用形態を確認」。利用人数radio「一人で使う」「複数人で使う」、同時編集checkbox「同時に入力・編集する」、利用場所radio「同じPCから」「社内の複数PCから」「社外・遠隔から」、checkbox「オフラインでも使う」、権限select（label「権限」、same/roles）、共存select（label「既存Accessとの共存」、契約enum）。「影響を確認」。人数・場所・通信は別の軸として扱う。
 - ステップ4: 見出し「依存関係と影響を確認」。選択/依存/共有/未選択への影響/未取得・非対応を別々に表示する。移行先radio「Webアプリ」「Excel」「Googleスプレッドシート + GAS」と理由・条件を表示。「計画を作成」。ユーザーの明示選択を保持する。
 - ステップ5: 見出し「移行計画」。status草案・要件未承認、要件/根拠/移行手順/検証手順/未解決/リスクを人が読める形で表示し、「Markdownを保存」「JSONを保存」を実行できる。テキストをHTMLとして挿入しない。

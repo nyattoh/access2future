@@ -50,6 +50,22 @@ test('ローカルのヘルスと合成デモを、実解析と区別して返�
   });
 });
 
+test('同梱Mermaid rendererを外部通信なしで配信し、画像BlobだけCSPで許可する', async () => {
+  await withServer(async (base) => {
+    const page = await fetch(base);
+    const html = await page.text();
+    assert.match(html, /\/vendor\/mermaid\.tiny\.js/);
+    const csp = page.headers.get('content-security-policy');
+    assert.match(csp, /script-src 'self'/);
+    assert.match(csp, /style-src 'self'/);
+    assert.match(csp, /img-src 'self' data: blob:/);
+    const vendor = await fetch(`${base}/vendor/mermaid.tiny.js`);
+    assert.equal(vendor.status, 200);
+    assert.match(vendor.headers.get('content-type'), /javascript/);
+    await vendor.body.cancel();
+  });
+});
+
 test('環境確認を共有し、画面を開くたびに新しいAccessを起動しない', async () => {
   let checks = 0;
   await withServer(async (base) => {
@@ -75,6 +91,21 @@ test('JSONの自己申告を、実Access解析の実績として表示しない'
     const response = await fetch(`${base}/api/inventory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...inventory, source: { name: 'claimed.accdb', kind: 'access' } }) });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).source.kind, 'inventory');
+  });
+});
+
+test('依存分析APIは影響候補と移行先を同じ在庫から返す', async () => {
+  await withServer(async (base) => {
+    const response = await fetch(`${base}/api/analyze`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inventory, selectedIds: ['form:orders'], usage }),
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(result.analysis.selectedIds, ['form:orders']);
+    assert.ok(result.analysis.dependencyIds.includes('table:orders'));
+    assert.ok(result.analysis.impactedIds.includes('form:billing'));
+    assert.ok(result.targets.length > 0);
   });
 });
 

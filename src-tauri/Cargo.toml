@@ -1,0 +1,35 @@
+[package]
+name = "access2future"
+version = "0.1.0"
+description = "Local Microsoft Access migration planning application"
+edition = "2024"
+
+[workspace]
+members = ["domain-core"]
+resolver = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+access2future-domain = { package = "domain-core", path = "domain-core" }
+axum = { version = "0.8", features = ["json", "http1", "tokio"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+include_dir = "0.7"
+mime_guess = "2"
+percent-encoding = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
