@@ -55,8 +55,37 @@ with sync_playwright() as runner:
             expect(page.get_by_role("heading", name="移行計画", exact=True)).to_be_visible()
             expect(page.get_by_text(re.compile("未承認")).first).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Plan overflow"
+            page.evaluate("""() => {
+              window.__savePickerCalls = [];
+              window.__savedFiles = [];
+              window.showSaveFilePicker = async (options) => {
+                window.__savePickerCalls.push(options);
+                return {
+                  createWritable: async () => ({
+                    write: async (content) => window.__savedFiles.push({ name: options.suggestedName, content }),
+                    close: async () => {},
+                  }),
+                };
+              };
+            }""")
+            page.get_by_role("button", name="Markdownを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_have_text("access-migration-plan.md を保存しました。")
+            assert page.evaluate("window.__savePickerCalls.length") == 1, "Markdown did not open the save picker"
+            saved_markdown = page.evaluate("window.__savedFiles[0].content")
+            assert "受注入力" in saved_markdown and "未承認" in saved_markdown and "合成" in saved_markdown
+            assert page.evaluate("window.__savePickerCalls[0].suggestedName") == "access-migration-plan.md"
+
+            page.get_by_role("button", name="JSONを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_have_text("access-migration-plan.json を保存しました。")
+            assert page.evaluate("window.__savePickerCalls.length") == 2, "JSON did not open the save picker"
+            saved_plan = json.loads(page.evaluate("window.__savedFiles[1].content"))
+            assert saved_plan["usage"]["users"] == "team" and saved_plan["usage"]["location"] == "remote"
+            assert page.evaluate("window.__savePickerCalls[1].suggestedName") == "access-migration-plan.json"
+
+            page.evaluate("window.showSaveFilePicker = undefined")
             with page.expect_download() as event:
                 page.get_by_role("button", name="Markdownを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_contain_text("ダウンロード")
             download = event.value
             destination = OUTPUT / f"{name}-plan.md"
             download.save_as(destination)
@@ -64,6 +93,7 @@ with sync_playwright() as runner:
             assert "受注入力" in content and "未承認" in content and "合成" in content
             with page.expect_download() as event:
                 page.get_by_role("button", name="JSONを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_contain_text("ダウンロード")
             destination = OUTPUT / f"{name}-plan.json"
             event.value.save_as(destination)
             plan = json.loads(destination.read_text(encoding="utf-8-sig"))
