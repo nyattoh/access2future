@@ -21,6 +21,8 @@
       "icons/icon.ico"
     ],
     "resources": {
+      "../LICENSE": "LICENSE",
+      "../public/vendor/mermaid-LICENSE.txt": "licenses/mermaid-LICENSE.txt",
       "../scripts/export-access.ps1": "scripts/export-access.ps1",
       "../scripts/vba-analysis.ps1": "scripts/vba-analysis.ps1"
     },

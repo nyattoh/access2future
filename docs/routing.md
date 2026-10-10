@@ -260,4 +260,4 @@ tests/access-import.test.mjsへVBAなしフォームの空要約を受け入れ�
 
 ### 2026-10-11 Apache-2.0 decision
 
-The user selected Apache-2.0 for the first public release. `LICENSE` now contains the official Apache Foundation 2.0 text. README and npm/Cargo package metadata identify Apache-2.0. Mermaid Tiny retains its MIT licence. These licence edits are being added to Draft PR #3; public release remains on hold until GitHub review and merge. Installer remains unsigned.
+The user selected Apache-2.0 for the first public release. `LICENSE` contains the official Apache Foundation 2.0 text. README and npm/Cargo package metadata identify Apache-2.0. Tauri resources include both the project licence and Mermaid Tiny's MIT notice. The rebuilt NSIS installer passed install/start/synthetic API and diagram/uninstall smoke with both licence files present; SHA256 `E96FD7DB3DB9538E4785B9E664781600F98B4CF92806BB0EBB76B46A83BDBD01`. These changes are committed and pushed to Draft PR #3; public release remains on hold until GitHub review and merge. Installer remains unsigned.

@@ -152,4 +152,4 @@ Computer Useの実ウィンドウ撮影は `Computer Use native pipe is unavaila
 
 ### 2026-10-11 Apache-2.0選択
 
-利用者は初回公開版のプロジェクトライセンスとしてApache-2.0を選択した。公式Apache FoundationのLICENSE-2.0本文を`LICENSE`へ配置し、README、npm package、Rust application/domain-core manifestsへ`Apache-2.0`識別子を記載。Mermaid TinyのMIT条件を含む依存・同梱ソフトウェアの個別ライセンス条件は維持する。公開releaseはDraft PR #3のreview/merge後まで保留し、Windows installerは未署名のまま。
+利用者は初回公開版のプロジェクトライセンスとしてApache-2.0を選択した。公式Apache FoundationのLICENSE-2.0本文を`LICENSE`へ配置し、README、npm package、Rust application/domain-core manifestsへ`Apache-2.0`識別子を記載。Tauri NSIS resourcesにプロジェクトLICENSEとMermaid TinyのMITライセンスを追加し、合成データでインストール先の配置・起動・API・図・アンインストールを再確認した。Mermaid Tiny以外の依存・同梱ソフトウェアの個別ライセンス条件も別途適用される。最終installerは3,767,422 bytes、SHA256 `E96FD7DB3DB9538E4785B9E664781600F98B4CF92806BB0EBB76B46A83BDBD01`。公開releaseはDraft PR #3のreview/merge後まで保留し、Windows installerは未署名のまま。
