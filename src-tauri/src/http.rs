@@ -843,6 +843,35 @@ mod tests {
         let html = page.into_body().collect().await.unwrap().to_bytes();
         assert!(String::from_utf8_lossy(&html).contains("/vendor/mermaid.tiny.js"));
 
+        let app_module = send(state.clone(), Method::GET, "/app.mjs", json!({}), false).await;
+        assert_eq!(app_module.status(), StatusCode::OK);
+        assert!(
+            app_module.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .contains("javascript")
+        );
+        assert!(
+            String::from_utf8_lossy(&app_module.into_body().collect().await.unwrap().to_bytes())
+                .contains("./plan-diagrams.mjs")
+        );
+
+        let diagram_module = send(
+            state.clone(),
+            Method::GET,
+            "/plan-diagrams.mjs",
+            json!({}),
+            false,
+        )
+        .await;
+        assert_eq!(diagram_module.status(), StatusCode::OK);
+        assert!(
+            diagram_module.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .contains("javascript")
+        );
+
         let renderer = send(
             state,
             Method::GET,

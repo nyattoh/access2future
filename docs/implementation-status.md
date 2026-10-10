@@ -2,7 +2,7 @@
 
 ## 最新状態 2026-10-11
 
-Rust/TauriのWindows release exeに、業務フロー候補図とER図をアプリ内表示する変更を追加した。ローカル同梱のMermaid Tiny 12.1.0を使用し、Node/Rust/browser試験とNSIS installerの合成データ起動試験を確認した。直近Node 64/64、Rust workspace 50 passed / 1 ignored、npm audit 0 vulnerabilities。UIはNode Web adapterのブラウザーで3サイズを目視確認。インストールしたTauri appから静的資産/APIを確認し、NSIS uninstallも成功。Computer Use native pipeが利用できず、Tauri WebView2の実ウィンドウ画像は未取得。PR/public releaseは未作成。
+Rust/TauriのWindows release exeに、業務フロー候補図とER図をアプリ内表示する変更を追加した。ローカル同梱のMermaid Tiny 12.1.0を使用し、Node 64件、Rust 50件合格、native専用Rust試験1件除外、npm audit 0件を確認した。Synthetic browser flowとNSIS install smokeも合格。計画画面はNode Web adapterで3サイズを目視確認した。インストールしたTauri appから静的資産とAPIを確認し、NSIS uninstallも成功した。Computer Use native pipeが利用できず、Tauri WebView2の実ウィンドウ画像は未取得。Commit `7220960`はpush済みで、[Draft PR #3](https://github.com/nyattoh/access2future/pull/3)はGrok独立reviewを待つ。公開releaseは未作成。
 
 ### 2026-10-11 独立レビュー後の修正・再検証
 
@@ -144,7 +144,7 @@ UI修正を含めて `npm run desktop:build -- --no-bundle` を再実行し、re
 
 TDDでは画面の合成計画にSVGがないためbrowser testが失敗したことを確認し、ライブラリ描画、CSP対応Blob画像、altテキスト、エラー時のソース表示を追加した。全Mermaidを含む最初の候補bundleにはKaTeX 0.16.47が残っており、npmのoverridesでは既成bundleを更新できなかったため不採用とした。Mermaid Tinyへ変更後に描画とNSIS buildをやり直した。
 
-確認結果: `npm test`は64件すべて合格。`npm audit`は脆弱性0件。`cargo fmt --check`は合格。Rust workspaceは50件合格し、native専用1件を除外した。T3 browser flowは合成計画の10項目が合格。renderer testは描画、altテキスト、無効なソースの表示を確認した。1280×800のPC、820×1180のタブレット、390×844のスマホで2つの図を表示し、文書幅はviewport幅を超えなかった。画像は `evidence/11-20261011-mermaid-tiny-desktop.png`、`12-20261011-mermaid-tiny-tablet.png`、`13-20261011-mermaid-tiny-phone.png`。
+確認結果: `npm test`は64件すべて合格。`npm audit`は脆弱性0件。`cargo fmt --check`は合格。Rust workspaceは50件合格し、native専用1件を除外した。Rustの静的資産試験で`app.mjs`と`plan-diagrams.mjs`のJavaScript MIME型を確認した。T3 browser flowは合成計画の10項目が合格。renderer testは描画、altテキスト、無効なソースの表示を確認した。1280×800のPC、820×1180のタブレット、390×844のスマホで2つの図を表示し、文書幅はviewport幅を超えなかった。画像は `evidence/11-20261011-mermaid-tiny-desktop.png`、`12-20261011-mermaid-tiny-tablet.png`、`13-20261011-mermaid-tiny-phone.png`。
 
 NSIS current-user installerは3,767,255 bytes、SHA256 `828AA7F37224D05354ECE7F44FB3BDDF04368F5B81411DA366B3DFEBE2C62421`。合成データだけを使って一時ディレクトリに導入し、実行ファイルがloopback page、vendor asset、tokenなし403、11資産demo、flow/ER planとMarkdown Mermaid fencesを返すことを確認した。Uninstaller exit code 0、install directory removed。アプリはこの試験後に停止し、永続インストールはない。Install reportは `.local/autonomous-run-20261011/evidence/nsis-mermaid-tiny-smoke.json`。
 
