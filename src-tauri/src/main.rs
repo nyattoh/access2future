@@ -6,6 +6,14 @@ mod http;
 use std::{net::SocketAddr, path::PathBuf};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+fn is_allowed_navigation(url: &tauri::Url, port: u16) -> bool {
+    let local =
+        url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(port);
+    let own_blob =
+        url.scheme() == "blob" && url.path().starts_with(&format!("http://127.0.0.1:{port}/"));
+    local || own_blob
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -34,11 +42,7 @@ fn main() {
                 "main",
                 WebviewUrl::External(format!("http://127.0.0.1:{port}/").parse()?),
             )
-            .on_navigation(move |url| {
-                url.scheme() == "http"
-                    && url.host_str() == Some("127.0.0.1")
-                    && url.port() == Some(port)
-            })
+            .on_navigation(move |url| is_allowed_navigation(url, port))
             .title("Access2Future")
             .inner_size(1240.0, 840.0)
             .min_inner_size(760.0, 640.0)
@@ -63,4 +67,24 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("Access2Future の起動に失敗しました");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_navigation;
+    use tauri::Url;
+
+    #[test]
+    fn navigation_allows_the_local_app_and_its_own_blob_downloads_only() {
+        let port = 7331;
+        let local = Url::parse("http://127.0.0.1:7331/").unwrap();
+        let own_blob = Url::parse("blob:http://127.0.0.1:7331/9e8b6fd0").unwrap();
+        let foreign_blob = Url::parse("blob:https://example.com/9e8b6fd0").unwrap();
+        let other_port = Url::parse("blob:http://127.0.0.1:7332/9e8b6fd0").unwrap();
+
+        assert!(is_allowed_navigation(&local, port));
+        assert!(is_allowed_navigation(&own_blob, port));
+        assert!(!is_allowed_navigation(&foreign_blob, port));
+        assert!(!is_allowed_navigation(&other_port, port));
+    }
 }
