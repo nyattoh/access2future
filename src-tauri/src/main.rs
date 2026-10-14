@@ -2,6 +2,7 @@
 
 mod access;
 mod http;
+mod save;
 
 use std::{net::SocketAddr, path::PathBuf};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -16,6 +17,7 @@ fn is_allowed_navigation(url: &tauri::Url, port: u16) -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
             listener.set_nonblocking(true)?;
@@ -29,6 +31,7 @@ fn main() {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts")
             };
             let state = http::AppState::new(port, token, helper_dir);
+            state.attach_app(app.handle().clone());
             let server_state = state.clone();
             tauri::async_runtime::spawn(async move {
                 let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {

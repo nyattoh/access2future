@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 
 use crate::access::{AccessFailure, AccessHelper, WorkerProgress};
+use crate::save::{SaveRequest, save_via_native_dialog};
 
 static PUBLIC: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../public");
 static SAMPLES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../samples");
@@ -32,6 +33,7 @@ pub struct AppState(Arc<StateInner>);
 struct StateInner {
     port: u16,
     token: String,
+    app: OnceLock<tauri::AppHandle>,
     helper: AccessHelper,
     access_cache: Mutex<Option<(Instant, Value)>>,
     active_import: Mutex<Option<Arc<ImportJob>>>,
@@ -77,12 +79,17 @@ impl AppState {
         Self(Arc::new(StateInner {
             port,
             token,
+            app: OnceLock::new(),
             helper: AccessHelper { script_dir },
             access_cache: Mutex::new(None),
             active_import: Mutex::new(None),
             last_import: Mutex::new(None),
             last_import_error: Mutex::new(None),
         }))
+    }
+
+    pub fn attach_app(&self, app: tauri::AppHandle) {
+        let _ = self.0.app.set(app);
     }
 
     pub fn import_is_active(&self) -> bool {
@@ -226,6 +233,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/import", post(import_access))
         .route("/api/import/progress", get(import_progress))
         .route("/api/import/cancel", post(cancel_import))
+        .route("/api/save", post(save_export))
         .fallback(static_asset)
         .layer(DefaultBodyLimit::max(MAX_FILE_BYTES))
         .layer(middleware::from_fn_with_state(
@@ -381,6 +389,30 @@ async fn plan(headers: HeaderMap, bytes: Bytes) -> Result<Json<Value>, ApiError>
     }
     let markdown = access2future_domain::render_plan_markdown(&plan);
     Ok(Json(json!({"plan":plan,"markdown":markdown})))
+}
+
+async fn save_export(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    bytes: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    require_json(&headers)?;
+    let request: SaveRequest =
+        serde_json::from_value(parse_json(&bytes, MAX_FILE_BYTES)?).map_err(|_| bad_json())?;
+    let app = state.0.app.get().ok_or(ApiError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "SAVE_UNAVAILABLE",
+        "このアプリではファイル保存ダイアログを開けません。",
+    ))?;
+    match save_via_native_dialog(app, request).await {
+        Ok(Some(saved)) => Ok(Json(json!(saved))),
+        Ok(None) => Ok(Json(json!({"path": null}))),
+        Err(_) => Err(ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SAVE_FAILED",
+            "ファイルを保存できませんでした。",
+        )),
+    }
 }
 
 fn require_json(headers: &HeaderMap) -> Result<(), ApiError> {
@@ -829,6 +861,29 @@ mod tests {
 
     fn state() -> AppState {
         AppState::new(39177, "test-token".into(), PathBuf::new())
+    }
+
+    #[tokio::test]
+    async fn save_requires_the_token_and_fails_closed_without_a_native_window() {
+        let body = json!({"format":"markdown","content":"x"});
+        let denied = send(state(), Method::POST, "/api/save", body.clone(), false).await;
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+        let unavailable = send(state(), Method::POST, "/api/save", body, true).await;
+        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let bad_format = json!({"format":"exe","content":"x"});
+        let rejected = send(state(), Method::POST, "/api/save", bad_format, true).await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn save_accepts_export_content_larger_than_the_json_input_limit() {
+        let content = "x".repeat(MAX_JSON_BYTES + 1);
+        let body = json!({"format":"markdown","content":content});
+        let response = send(state(), Method::POST, "/api/save", body, true).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

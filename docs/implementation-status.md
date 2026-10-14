@@ -153,3 +153,9 @@ Computer Useの実ウィンドウ撮影は `Computer Use native pipe is unavaila
 ### 2026-10-11 Apache-2.0選択
 
 利用者は初回公開版のプロジェクトライセンスとしてApache-2.0を選択した。公式Apache FoundationのLICENSE-2.0本文を`LICENSE`へ配置し、README、npm package、Rust application/domain-core manifestsへ`Apache-2.0`識別子を記載。Tauri NSIS resourcesにプロジェクトLICENSEとMermaid TinyのMITライセンスを追加し、合成データでインストール先の配置・起動・API・図・アンインストールを再確認した。Grok r4の指摘を受け、DOMPurify 3.4.12とLodash 4.18.1を含むバンドル内ソフトウェアの著作権表示とMPL/MIT本文も追加してNSIS resourcesへ同梱した。最終installerは3,782,576 bytes、SHA256 `1C59DD7C1C912DAF0DC9263013447114DD5E6432150E74EA208F5A552EF75F8D`。Node 66 tests、Rust workspace、0脆弱性、最終NSIS smokeに合格。公開releaseはDraft PR #3のreview/merge後まで保留し、Windows installerは未署名のまま。WebView2ネイティブ画面でBlob保存操作の確認は未実施。
+
+## 2026-10-15 0.1.3 native save
+
+Windows desktop export now uses an authenticated loopback `POST /api/save`. Rust opens the native Save As dialog, writes the selected Markdown or JSON file, flushes it, checks the byte count and returns the path only on success. Browser-only export remains on the existing browser path. The request cannot choose an arbitrary path.
+
+The user confirmed that both Markdown and JSON saved in the local Windows app. Exact paths, sizes, reopening/parsing and dialog cancellation were not reported. Automated checks on synthetic data do not replace that manual confirmation. The original v0.1.2 false-success event was not independently reproduced, so this release does not claim a confirmed root cause.

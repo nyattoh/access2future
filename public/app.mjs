@@ -605,6 +605,15 @@ async function save(name, text, type, extension) {
   const status = document.querySelector('#save-status');
   status.textContent = '';
   try {
+    if (document.querySelector('meta[name="access2future-token"]')) { // デスクトップ版: Rust側のネイティブ保存ダイアログで書き込む
+      const saved = await api('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: extension === '.md' ? 'markdown' : 'json', content: text }),
+      });
+      status.textContent = saved?.path ? `${saved.path} に保存しました。` : '保存をキャンセルしました。';
+      return;
+    }
     if (typeof window.showSaveFilePicker === 'function') {
       const handle = await window.showSaveFilePicker({
         suggestedName: name,

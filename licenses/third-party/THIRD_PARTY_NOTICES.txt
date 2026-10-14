@@ -12,3 +12,13 @@ Lodash 4.18.1 (custom build)
 Copyright OpenJS Foundation and other contributors.
 Based on Underscore.js 1.8.3, copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors.
 Licence: MIT. See licenses/lodash-MIT.txt.
+
+Native Windows Save As dependencies
+
+Tauri plugins workspace 2.7.1 / tauri-plugin-dialog 2.8.2 / tauri-plugin-fs 2.7.0
+Copyright (c) 2017 - Present Tauri Apps Contributors. Maintained by Tauri Programme within The Commons Conservancy.
+These packages are dual-licensed under Apache-2.0 OR MIT. This distribution uses the MIT option. See licenses/third-party/tauri-plugin-dialog-MIT.txt.
+
+rfd 0.16.0
+Copyright (c) 2022 Bartłomiej Maryńczak.
+Licence: MIT. See licenses/third-party/rfd-MIT.txt.
