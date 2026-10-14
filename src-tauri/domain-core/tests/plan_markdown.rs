@@ -199,6 +199,76 @@ fn er_diagram_is_empty_when_dependency_scope_has_no_tables() {
 }
 
 #[test]
+fn fk_only_relations_show_impacted_paths_without_widening_selection() {
+    let input = inventory_x(
+        &[
+            asset("form:選択", "form", &["table:親"]),
+            asset("table:親", "table", &[]),
+            asset("form:未選択", "form", &["query:子"]),
+            asset("query:子", "query", &["table:子"]),
+            asset("table:子", "table", &[]),
+            asset("table:中間", "table", &[]),
+            asset("form:無関係", "form", &["table:無関係"]),
+            asset("table:無関係", "table", &[]),
+        ],
+        json!({ "relations": [
+            { "from": "table:子", "to": "table:中間", "fields": [{ "from": "中間ID", "to": "ID" }] },
+            { "from": "table:中間", "to": "table:親", "fields": [{ "from": "親ID", "to": "ID" }] }
+        ] }),
+    );
+    let plan = build_plan(
+        &input,
+        &json!({ "selectedIds": ["form:選択"], "usage": common::solo_usage() }),
+    )
+    .unwrap();
+    assert_eq!(plan["analysis"]["selectedIds"], json!(["form:選択"]));
+    assert_eq!(plan["analysis"]["dependencyIds"], json!(["table:親"]));
+    assert_eq!(plan["analysis"]["impactedIds"], json!(["form:未選択"]));
+    assert_eq!(plan["analysis"]["sharedIds"], json!(["table:親"]));
+    let flow = plan["diagrams"]["flow"].as_str().unwrap();
+    let id_of = |kind: &str, name: &str| -> String {
+        let re = Regex::new(&format!(r#"(n\d+)\[\(?"{kind}: {name}""#)).unwrap();
+        re.captures(flow)
+            .unwrap_or_else(|| panic!("図に {kind}: {name} があること\n{flow}"))[1]
+            .to_string()
+    };
+    let lines: Vec<&str> = flow.lines().map(str::trim).collect();
+    for (from_kind, from_name, to_kind, to_name, label) in [
+        ("form", "未選択", "query", "子", ""),
+        ("query", "子", "table", "子", ""),
+        ("table", "子", "table", "中間", ""),
+        ("table", "中間", "table", "親", "|影響候補|"),
+    ] {
+        let edge = format!(
+            "{} -.->{} {}",
+            id_of(from_kind, from_name), label, id_of(to_kind, to_name)
+        );
+        assert!(lines.contains(&edge.as_str()), "{edge}\n{flow}");
+    }
+    assert!(!flow.contains("無関係"));
+    let er = plan["diagrams"]["er"].as_str().unwrap();
+    for name in ["子", "中間", "無関係"] {
+        assert!(!er.contains(name), "影響経路をER選択範囲へ追加しない");
+    }
+}
+
+#[test]
+fn heading_only_legacy_er_uses_no_tables_markdown_fallback() {
+    let input = inventory_x(&[asset("form:A", "form", &[])], json!({}));
+    let mut plan = build_plan(
+        &input,
+        &json!({ "selectedIds": ["form:A"], "usage": common::solo_usage() }),
+    )
+    .unwrap();
+    for er in ["erDiagram", " \n erDiagram \n "] {
+        plan["diagrams"]["er"] = json!(er);
+        let text = render_plan_markdown(&plan);
+        assert!(text.contains("### ER図（依存範囲のテーブル）\n\n依存範囲にテーブルはありません。"));
+        assert_eq!(text.matches("```mermaid").count(), 1);
+    }
+}
+
+#[test]
 fn impacted_unselected_screens_show_paths_via_intermediate_assets() {
     let demo = common::demo_inventory();
     let plan = build_plan(

@@ -937,6 +937,23 @@ fn closure(
     visited
 }
 
+fn dependency_edges(inventory: &Value) -> HashMap<String, Vec<String>> {
+    let mut edges = HashMap::new();
+    for asset in inventory["assets"].as_array().unwrap() {
+        edges.insert(
+            asset["id"].as_str().unwrap_or_default().to_string(),
+            strings(&asset["dependsOn"]),
+        );
+    }
+    for relation in inventory["relations"].as_array().unwrap() {
+        let from = relation["from"].as_str().unwrap_or_default();
+        if let Some(dependencies) = edges.get_mut(from) {
+            dependencies.push(relation["to"].as_str().unwrap_or_default().to_string());
+        }
+    }
+    edges
+}
+
 pub fn analyze_selection(input: &Value, selected_ids: &[String]) -> Result<Value, String> {
     let inventory = normalize_inventory(input)?;
     if selected_ids.len() > 5000 {
@@ -971,24 +988,7 @@ pub fn analyze_selection(input: &Value, selected_ids: &[String]) -> Result<Value
             ));
         }
     }
-    let mut edges: HashMap<String, Vec<String>> = HashMap::new();
-    for a in assets {
-        edges.insert(
-            a["id"].as_str().unwrap_or_default().to_string(),
-            a["dependsOn"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|d| d.as_str().unwrap_or_default().to_string())
-                .collect(),
-        );
-    }
-    for r in inventory["relations"].as_array().unwrap() {
-        let from = r["from"].as_str().unwrap_or_default();
-        if let Some(v) = edges.get_mut(from) {
-            v.push(r["to"].as_str().unwrap_or_default().to_string());
-        }
-    }
+    let edges = dependency_edges(&inventory);
     let mut unresolved = IssueSink::default();
     let mut blockers = IssueSink::default();
     let included = closure(&edges, &by_id, &selected, true, &mut unresolved);
@@ -1343,6 +1343,7 @@ fn mermaid_text(v: &str) -> String {
 
 fn build_diagrams(inventory: &Value, analysis: &Value) -> Value {
     let assets = inventory["assets"].as_array().unwrap();
+    let dependency_edges = dependency_edges(inventory);
     let by_id: HashMap<&str, &Value> = assets
         .iter()
         .map(|a| (a["id"].as_str().unwrap_or_default(), a))
@@ -1411,10 +1412,11 @@ fn build_diagrams(inventory: &Value, analysis: &Value) -> Value {
         let mut seen: HashSet<String> = HashSet::from([root.clone()]);
         let mut stack: Vec<Vec<String>> = vec![vec![root.clone()]];
         while let Some(path) = stack.pop() {
-            let deps: Vec<String> = match path.last().and_then(|l| by_id.get(l.as_str())) {
-                Some(asset) => strings(&asset["dependsOn"]),
-                None => Vec::new(),
-            };
+            let deps = path
+                .last()
+                .and_then(|id| dependency_edges.get(id))
+                .cloned()
+                .unwrap_or_default();
             for to in deps {
                 if included_set.contains(&to) {
                     let mut extended = path.clone();
@@ -2034,7 +2036,7 @@ pub fn render_plan_markdown(plan: &Value) -> String {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        if !er.is_empty() {
+        if !er.trim().is_empty() && er.trim() != "erDiagram" {
             lines.push("```mermaid".into());
             lines.push(er);
             lines.push("```".into());
