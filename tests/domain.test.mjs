@@ -507,6 +507,48 @@ test('依存範囲にテーブルがないときER図を空にし、Markdownで�
   assert.doesNotMatch(text, /### ER図[^]*```mermaid\nerDiagram/);
 });
 
+test('見出しだけの旧ER図はMarkdownでテーブルなしと説明する', () => {
+  const plan = buildPlan(inventory([asset('form:A', 'form')]), { selectedIds: ['form:A'], usage: solo });
+  for (const er of ['erDiagram', ' \n erDiagram \n ']) {
+    const text = renderPlanMarkdown({ ...plan, diagrams: { ...plan.diagrams, er } });
+    assert.match(text, /### ER図（依存範囲のテーブル）\n\n依存範囲にテーブルはありません。/);
+    assert.equal(text.split('```mermaid').length - 1, 1, '業務フローのコードブロックだけを出力する');
+  }
+});
+
+test('テーブルのdependsOnが空でもFK関連を経由する影響経路を点線で示す', () => {
+  const input = inventory([
+    asset('form:選択', 'form', ['table:親']),
+    asset('table:親', 'table'),
+    asset('form:未選択', 'form', ['query:子']),
+    asset('query:子', 'query', ['table:子']),
+    asset('table:子', 'table'),
+    asset('table:中間', 'table'),
+    asset('form:無関係', 'form', ['table:無関係']),
+    asset('table:無関係', 'table')
+  ], { relations: [
+    { from: 'table:子', to: 'table:中間', fields: [{ from: '中間ID', to: 'ID' }] },
+    { from: 'table:中間', to: 'table:親', fields: [{ from: '親ID', to: 'ID' }] }
+  ] });
+  const plan = buildPlan(input, { selectedIds: ['form:選択'], usage: solo });
+  assert.deepEqual(plan.analysis.selectedIds, ['form:選択']);
+  assert.deepEqual(plan.analysis.dependencyIds, ['table:親'], 'FKを逆方向に辿って選択範囲を広げない');
+  assert.deepEqual(plan.analysis.impactedIds, ['form:未選択']);
+  assert.deepEqual(plan.analysis.sharedIds, ['table:親']);
+  const { flow, er } = plan.diagrams;
+  const id = name => flow.match(new RegExp(String.raw`(n\d+)\[\(?"[a-z]+: ${name}"`))?.[1];
+  const lines = flow.split('\n').map(line => line.trim());
+  for (const name of ['未選択', '子', '中間', '親']) assert.match(id(name) ?? '', /^n\d+$/, `${name}のノードがある`);
+  const queryId = flow.match(/(n\d+)\["query: 子"\]/)[1];
+  const childId = flow.match(/(n\d+)\[\("table: 子"\)\]/)[1];
+  assert.ok(lines.includes(`${id('未選択')} -.-> ${queryId}`));
+  assert.ok(lines.includes(`${queryId} -.-> ${childId}`));
+  assert.ok(lines.includes(`${childId} -.-> ${id('中間')}`));
+  assert.ok(lines.includes(`${id('中間')} -.->|影響候補| ${id('親')}`));
+  assert.doesNotMatch(flow, /無関係/);
+  assert.doesNotMatch(er, /中間|子|無関係/, '影響経路のテーブルを選択範囲のER図へ追加しない');
+});
+
 test('影響候補の未選択画面は中間資産を経由する経路も図に示す', async () => {
   const demo = JSON.parse(await readFile(new URL('../samples/demo.inventory.json', import.meta.url), 'utf8'));
   const { flow } = buildPlan(demo, { selectedIds: ['form:受注入力'], usage: solo }).diagrams;
