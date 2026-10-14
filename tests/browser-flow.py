@@ -56,35 +56,45 @@ with sync_playwright() as runner:
             expect(page.get_by_text(re.compile("未承認")).first).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "Plan overflow"
             page.evaluate("""() => {
-              window.__savePickerCalls = [];
-              window.__savedFiles = [];
-              window.showSaveFilePicker = async (options) => {
-                window.__savePickerCalls.push(options);
-                return {
-                  createWritable: async () => ({
-                    write: async (content) => window.__savedFiles.push({ name: options.suggestedName, content }),
-                    close: async () => {},
-                  }),
-                };
+              window.__nativeSaveCalls = [];
+              document.head.insertAdjacentHTML('beforeend', '<meta name="access2future-token" content="test-token">');
+              window.showSaveFilePicker = async () => { throw new DOMException('', 'AbortError') };
+              const nativeFetch = window.fetch.bind(window);
+              window.fetch = async (input, init = {}) => {
+                if (input === '/api/save') {
+                  const request = { path: input, headers: Object.fromEntries(new Headers(init.headers)), body: JSON.parse(init.body) };
+                  window.__nativeSaveCalls.push(request);
+                  if (request.body.format === 'cancel') return new Response(JSON.stringify({ path: null }), { headers: { 'Content-Type': 'application/json' } });
+                  if (request.body.format === 'error') return new Response(JSON.stringify({ error: { message: 'write failed' } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+                  return new Response(JSON.stringify({ path: `C:/Users/test/Documents/access-migration-plan.${request.body.format === 'markdown' ? 'md' : 'json'}`, bytes: request.body.content.length }), { headers: { 'Content-Type': 'application/json' } });
+                }
+                return nativeFetch(input, init);
               };
             }""")
             page.get_by_role("button", name="Markdownを保存", exact=True).click()
-            expect(page.get_by_role("status")).to_have_text("access-migration-plan.md を保存しました。")
-            assert page.evaluate("window.__savePickerCalls.length") == 1, "Markdown did not open the save picker"
-            saved_markdown = page.evaluate("window.__savedFiles[0].content")
+            expect(page.get_by_role("status")).to_contain_text("C:/Users/test/Documents/access-migration-plan.md")
+            assert page.evaluate("window.__nativeSaveCalls.length") == 1, "Markdown did not call the native save command"
+            assert page.evaluate("window.__nativeSaveCalls[0].path") == "/api/save"
+            assert page.evaluate("window.__nativeSaveCalls[0].headers['x-a2f-token']") == "test-token", "Native save request did not include the local token"
+            assert page.evaluate("window.__nativeSaveCalls[0].body.format") == "markdown"
+            saved_markdown = page.evaluate("window.__nativeSaveCalls[0].body.content")
             assert "受注入力" in saved_markdown and "未承認" in saved_markdown and "合成" in saved_markdown
-            assert page.evaluate("window.__savePickerCalls[0].suggestedName") == "access-migration-plan.md"
 
             page.get_by_role("button", name="JSONを保存", exact=True).click()
-            expect(page.get_by_role("status")).to_have_text("access-migration-plan.json を保存しました。")
-            assert page.evaluate("window.__savePickerCalls.length") == 2, "JSON did not open the save picker"
-            saved_plan = json.loads(page.evaluate("window.__savedFiles[1].content"))
+            expect(page.get_by_role("status")).to_contain_text("C:/Users/test/Documents/access-migration-plan.json")
+            assert page.evaluate("window.__nativeSaveCalls.length") == 2, "JSON did not call the native save command"
+            saved_plan = json.loads(page.evaluate("window.__nativeSaveCalls[1].body.content"))
             assert saved_plan["usage"]["users"] == "team" and saved_plan["usage"]["location"] == "remote"
-            assert page.evaluate("window.__savePickerCalls[1].suggestedName") == "access-migration-plan.json"
-            assert page.evaluate("window.__savePickerCalls[0].types[0].accept['text/markdown'][0]") == ".md"
-            assert page.evaluate("window.__savePickerCalls[1].types[0].accept['application/json'][0]") == ".json"
 
-            page.evaluate("(() => { window.showSaveFilePicker = async () => { throw new DOMException('', 'AbortError') }; return true })()")
+            page.evaluate("window.fetch = async (input, init = {}) => input === '/api/save' ? new Response(JSON.stringify({ path: null }), { headers: { 'Content-Type': 'application/json' } }) : Promise.reject(new Error('unexpected request'))")
+            page.get_by_role("button", name="Markdownを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_have_text("保存をキャンセルしました。")
+
+            page.evaluate("window.fetch = async (input, init = {}) => input === '/api/save' ? new Response(JSON.stringify({ error: { message: 'write failed' } }), { status: 500, headers: { 'Content-Type': 'application/json' } }) : Promise.reject(new Error('unexpected request'))")
+            page.get_by_role("button", name="JSONを保存", exact=True).click()
+            expect(page.get_by_role("status")).to_have_text("access-migration-plan.json を保存できませんでした。もう一度お試しください。")
+
+            page.evaluate("document.querySelector('meta[name=access2future-token]').remove()")
             page.get_by_role("button", name="Markdownを保存", exact=True).click()
             expect(page.get_by_role("status")).to_have_text("保存をキャンセルしました。")
 
