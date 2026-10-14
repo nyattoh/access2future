@@ -241,7 +241,9 @@ fn fk_only_relations_show_impacted_paths_without_widening_selection() {
     ] {
         let edge = format!(
             "{} -.->{} {}",
-            id_of(from_kind, from_name), label, id_of(to_kind, to_name)
+            id_of(from_kind, from_name),
+            label,
+            id_of(to_kind, to_name)
         );
         assert!(lines.contains(&edge.as_str()), "{edge}\n{flow}");
     }
