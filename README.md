@@ -75,9 +75,9 @@ npm run test:native   # Windows + Access 環境で合成ファイルを作って
 
 ブラウザ試験（`python -X utf8 tests/browser-flow.py`）を動かすには、別途 Python、Playwright、Chromium が必要です。
 
-## Windows デスクトップ版（開発中）
+## Windows デスクトップ版
 
-Windows版はRust/Tauri 2で専用ウィンドウを開き、既存のHTML/CSS/JavaScript画面をWebView2で表示します。解析・依存分析・計画生成はRust側で処理し、Accessの構造抽出には `scripts/export-access.ps1` と `scripts/vba-analysis.ps1` を同梱してWindows PowerShell 5.1から呼び出します。Node.jsのNode runtimeはデスクトップ版の実行時依存にしません。
+Windows版はRust/Tauri 2で専用ウィンドウを開き、既存のHTML/CSS/JavaScript画面をWebView2で表示します。解析・依存分析・計画生成はRust側で処理し、Accessの構造抽出には `scripts/export-access.ps1` と `scripts/vba-analysis.ps1` を同梱してWindows PowerShell 5.1から呼び出します。Node.jsのNode runtimeはデスクトップ版の実行時依存にしません。MarkdownまたはJSONを保存するとWindowsの「名前を付けて保存」画面が開き、Rustが書込みを確認した後に保存先を表示します。
 
 開発にはWindows 10/11 x64、Rust stable MSVC、Visual Studio C++ Build Tools、WebView2 Runtimeが必要です。初回インストーラーはNSISのユーザー単位 `-setup.exe` を作る設定です。WebView2 Evergreen RuntimeがないPCではインストール時にMicrosoftから取得するため、その時点でネット接続が必要です。Accessファイルの解析には対象PCのデスクトップ版Microsoft Accessが必要で、Access Runtimeだけの構成は未確認です。
 
@@ -89,7 +89,7 @@ npm run desktop:build
 
 `npm` を使わない場合は、リポジトリのルートで `cargo tauri dev`、`cargo test --manifest-path src-tauri/Cargo.toml`、`cargo tauri build` を実行します。
 
-インストーラーは `src-tauri/target/release/bundle/nsis/` に出力されます。署名証明書は設定していないため、生成物は未署名です。公開配布前に対象端末でインストール、起動、WebView2表示、計画の保存、COM解析、中止・一時ファイル削除を確認してください。
+インストーラーは `src-tauri/target/release/bundle/nsis/` に出力されます。署名証明書は設定していないため、生成物は未署名です。MarkdownとJSONの保存はWindowsアプリで確認しました。Access COM解析と中止後の一時ファイル削除は、Accessを使える対象環境で個別に確認してください。
 
 ## 制約
 

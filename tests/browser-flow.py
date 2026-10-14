@@ -86,11 +86,21 @@ with sync_playwright() as runner:
             saved_plan = json.loads(page.evaluate("window.__nativeSaveCalls[1].body.content"))
             assert saved_plan["usage"]["users"] == "team" and saved_plan["usage"]["location"] == "remote"
 
-            page.evaluate("window.fetch = async (input, init = {}) => input === '/api/save' ? new Response(JSON.stringify({ path: null }), { headers: { 'Content-Type': 'application/json' } }) : Promise.reject(new Error('unexpected request'))")
+            page.evaluate("""() => {
+              const previous = window.fetch.bind(window);
+              window.fetch = async (input, init = {}) => input === '/api/save'
+                ? new Response(JSON.stringify({ path: null }), { headers: { 'Content-Type': 'application/json' } })
+                : previous(input, init);
+            }""")
             page.get_by_role("button", name="Markdownを保存", exact=True).click()
             expect(page.get_by_role("status")).to_have_text("保存をキャンセルしました。")
 
-            page.evaluate("window.fetch = async (input, init = {}) => input === '/api/save' ? new Response(JSON.stringify({ error: { message: 'write failed' } }), { status: 500, headers: { 'Content-Type': 'application/json' } }) : Promise.reject(new Error('unexpected request'))")
+            page.evaluate("""() => {
+              const previous = window.fetch.bind(window);
+              window.fetch = async (input, init = {}) => input === '/api/save'
+                ? new Response(JSON.stringify({ error: { message: 'write failed' } }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+                : previous(input, init);
+            }""")
             page.get_by_role("button", name="JSONを保存", exact=True).click()
             expect(page.get_by_role("status")).to_have_text("access-migration-plan.json を保存できませんでした。もう一度お試しください。")
 

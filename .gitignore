@@ -21,6 +21,8 @@ Thumbs.db
 
 # Local private analysis, dependencies and browser evidence
 .local/
+__pycache__/
+*.py[cod]
 node_modules/
 test-results/
 artifacts/screenshots/
