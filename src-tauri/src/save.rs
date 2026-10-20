@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -118,13 +117,9 @@ fn write_export_with(
 
 /// A unique hidden name in the destination folder, so the final rename stays on one volume.
 fn temp_sibling(path: &Path) -> Result<PathBuf, SaveError> {
-    let name = path
-        .file_name()
+    path.file_name()
         .ok_or_else(|| SaveError::other("save path has no file name"))?;
-    let mut temp = OsString::from(".");
-    temp.push(name);
-    temp.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
-    Ok(path.with_file_name(temp))
+    Ok(path.with_file_name(format!(".{}.tmp", uuid::Uuid::new_v4())))
 }
 
 #[cfg(test)]
@@ -206,6 +201,42 @@ mod tests {
             "failed saves leave no temporary file"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_long_destination_names_and_preserves_them_after_failure() {
+        let dir = temp_dir("long");
+        for name in [
+            format!("{}.md", "a".repeat(240)),
+            format!("{}.json", "計".repeat(80)),
+        ] {
+            let path = dir.join(name);
+            let saved = write_export_file(&path, "first plan").unwrap();
+            assert_eq!(saved.bytes, 10);
+            assert_eq!(saved.path, path.display().to_string());
+            write_export_file(&path, "新版").unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), "新版");
+            let result = write_export_with(&path, "replacement", |file, bytes| {
+                file.write_all(&bytes[..3])?;
+                Err(SaveError::other("simulated write failure"))
+            });
+            assert!(result.is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), "新版");
+            fs::remove_file(&path).unwrap();
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn temporary_siblings_have_bounded_unique_names() {
+        let path = Path::new("exports").join(format!("{}.json", "a".repeat(240)));
+        let first = temp_sibling(&path).unwrap();
+        let second = temp_sibling(&path).unwrap();
+        assert_eq!(first.parent(), path.parent());
+        assert_ne!(first, second);
+        assert!(first.file_name().unwrap().len() <= 64);
+        assert!(temp_sibling(Path::new("/")).is_err());
     }
 
     #[test]
