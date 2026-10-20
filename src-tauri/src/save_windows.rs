@@ -1,8 +1,14 @@
 use super::SaveError;
 use std::{fs, os::windows::ffi::OsStrExt, path::Path};
 use windows_sys::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2},
-    Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW, ReplaceFileW},
+    Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NETWORK_ACCESS_DENIED,
+        ERROR_PRIVILEGE_NOT_HELD, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
+    },
+    Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS, ReplaceFileW,
+    },
 };
 
 pub(super) fn destination_exists(path: &Path) -> Result<bool, SaveError> {
@@ -38,15 +44,33 @@ fn wide(path: &Path) -> Result<Vec<u16>, SaveError> {
 }
 
 trait CommitOps {
-    fn replace(&mut self, destination: &Path, temp: &Path, backup: &Path) -> Result<(), SaveError>;
+    fn replace(
+        &mut self,
+        destination: &Path,
+        temp: &Path,
+        backup: &Path,
+        flags: u32,
+    ) -> Result<(), SaveError>;
     fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), SaveError>;
+    fn move_replace(
+        &mut self,
+        source: &Path,
+        destination: &Path,
+        flags: u32,
+    ) -> Result<(), SaveError>;
     fn remove_backup(&mut self, backup: &Path) -> Result<(), SaveError>;
 }
 
 struct Windows;
 
 impl CommitOps for Windows {
-    fn replace(&mut self, destination: &Path, temp: &Path, backup: &Path) -> Result<(), SaveError> {
+    fn replace(
+        &mut self,
+        destination: &Path,
+        temp: &Path,
+        backup: &Path,
+        flags: u32,
+    ) -> Result<(), SaveError> {
         let destination = wide(destination)?;
         let temp = wide(temp)?;
         let backup = wide(backup)?;
@@ -56,7 +80,7 @@ impl CommitOps for Windows {
                 destination.as_ptr(),
                 temp.as_ptr(),
                 backup.as_ptr(),
-                0,
+                flags,
                 std::ptr::null(),
                 std::ptr::null(),
             )
@@ -69,21 +93,16 @@ impl CommitOps for Windows {
     }
 
     fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), SaveError> {
-        let source = wide(source)?;
-        let destination = wide(destination)?;
-        // No replace/copy flags: a destination that appears concurrently must survive.
-        let result = unsafe {
-            MoveFileExW(
-                source.as_ptr(),
-                destination.as_ptr(),
-                MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if result == 0 {
-            Err(SaveError::last_os_error())
-        } else {
-            Ok(())
-        }
+        move_file(source, destination, MOVEFILE_WRITE_THROUGH)
+    }
+
+    fn move_replace(
+        &mut self,
+        source: &Path,
+        destination: &Path,
+        flags: u32,
+    ) -> Result<(), SaveError> {
+        move_file(source, destination, flags)
     }
 
     fn remove_backup(&mut self, backup: &Path) -> Result<(), SaveError> {
@@ -91,9 +110,53 @@ impl CommitOps for Windows {
     }
 }
 
+fn move_file(source: &Path, destination: &Path, flags: u32) -> Result<(), SaveError> {
+    let source = wide(source)?;
+    let destination = wide(destination)?;
+    // Both UTF-16 buffers are terminated and remain live throughout the call.
+    let result = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), flags) };
+    if result == 0 {
+        Err(SaveError::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 pub(super) fn commit(temp: &Path, destination: &Path, existed: bool) -> Result<(), SaveError> {
     let backup = destination.with_file_name(format!(".{}.bak", uuid::Uuid::new_v4()));
     commit_with(temp, destination, existed, &backup, &mut Windows)
+}
+
+fn committed(backup: &Path, ops: &mut impl CommitOps) -> Result<(), SaveError> {
+    // The destination already contains the complete export. Cleanup cannot undo success.
+    let _ = ops.remove_backup(backup);
+    Ok(())
+}
+
+fn permission_error(error: &SaveError) -> bool {
+    matches!(error.raw_os_error(), Some(code) if code == ERROR_ACCESS_DENIED as i32
+        || code == ERROR_NETWORK_ACCESS_DENIED as i32 || code == ERROR_PRIVILEGE_NOT_HELD as i32)
+}
+
+fn restore_partial(
+    error: SaveError,
+    destination: &Path,
+    backup: &Path,
+    ops: &mut impl CommitOps,
+) -> SaveError {
+    if error.raw_os_error() == Some(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 as i32)
+        && backup.try_exists().unwrap_or(false)
+        && let Err(restore_error) = ops.move_new(backup, destination)
+    {
+        return SaveError::new(
+            error.kind(),
+            format!(
+                "{error}; could not restore previous export ({restore_error}); recovery backup: {}",
+                backup.display()
+            ),
+        );
+    }
+    error
 }
 
 fn commit_with(
@@ -106,23 +169,37 @@ fn commit_with(
     if !existed {
         return ops.move_new(temp, destination);
     }
-    match ops.replace(destination, temp, backup) {
-        Ok(()) => {
-            // Replacement is already committed; cleanup failure cannot undo success.
-            let _ = ops.remove_backup(backup);
-            Ok(())
-        }
+    let first = match ops.replace(destination, temp, backup, 0) {
+        Ok(()) => return committed(backup, ops),
         Err(error) if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) => {
-            ops.move_new(temp, destination)
+            return ops.move_new(temp, destination);
         }
-        Err(error) => {
-            if error.raw_os_error() == Some(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 as i32)
-                && backup.try_exists().unwrap_or(false)
-            {
-                // 1177 can leave the old file at backup. Never replace a racing target.
-                let _ = ops.move_new(backup, destination);
-            }
-            Err(error)
+        Err(error) if permission_error(&error) => error,
+        Err(error) => return Err(restore_partial(error, destination, backup, ops)),
+    };
+    let retry = match ops.replace(
+        destination,
+        temp,
+        backup,
+        REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS,
+    ) {
+        Ok(()) => return committed(backup, ops),
+        Err(error) => error,
+    };
+    match ops.move_replace(
+        temp,
+        destination,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+    ) {
+        Ok(()) => committed(backup, ops),
+        Err(final_error) => {
+            let recovery = restore_partial(retry, destination, backup, ops);
+            Err(SaveError::new(
+                final_error.kind(),
+                format!(
+                    "Export replacement failed: strict replace ({first}); relaxed replace ({recovery}); final move ({final_error})"
+                ),
+            ))
         }
     }
 }
@@ -146,6 +223,7 @@ mod tests {
             destination: &Path,
             temp: &Path,
             backup: &Path,
+            flags: u32,
         ) -> Result<(), SaveError> {
             match self.error {
                 Some(1177) => {
@@ -163,12 +241,20 @@ mod tests {
                     Err(SaveError::from_raw_os_error(2))
                 }
                 Some(error) => Err(SaveError::from_raw_os_error(error)),
-                None => self.real.replace(destination, temp, backup),
+                None => self.real.replace(destination, temp, backup, flags),
             }
         }
         fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), SaveError> {
             self.moves += 1;
             self.real.move_new(source, destination)
+        }
+        fn move_replace(
+            &mut self,
+            source: &Path,
+            destination: &Path,
+            flags: u32,
+        ) -> Result<(), SaveError> {
+            self.real.move_replace(source, destination, flags)
         }
         fn remove_backup(&mut self, backup: &Path) -> Result<(), SaveError> {
             if self.cleanup_error {
@@ -197,12 +283,12 @@ mod tests {
                 moves: 0,
                 real: Windows,
             };
-            assert_eq!(
-                commit_with(&temp, &destination, true, &backup, &mut ops)
-                    .unwrap_err()
-                    .raw_os_error(),
-                Some(1177)
-            );
+            let error = commit_with(&temp, &destination, true, &backup, &mut ops).unwrap_err();
+            if racer {
+                assert!(error.to_string().contains("recovery backup:"));
+            } else {
+                assert_eq!(error.raw_os_error(), Some(1177));
+            }
             assert_eq!(ops.moves, 1);
             assert_eq!(
                 fs::read_to_string(&destination).unwrap(),
@@ -252,7 +338,7 @@ mod tests {
     #[test]
     fn other_errors_never_trigger_restore_or_cleanup() {
         let dir = super::super::tests::temp_dir("no-fallback");
-        for code in [5, 1175, 1176] {
+        for code in [32, 1175, 1176] {
             let destination = dir.join("plan.md");
             let temp = dir.join("temp");
             let backup = dir.join("backup");
@@ -309,5 +395,212 @@ mod tests {
                 .starts_with(&[92, 92, 63, 92])
         );
         assert!(wide(Path::new("bad\0name")).is_err());
+    }
+    struct ScriptedOps {
+        errors: std::collections::VecDeque<i32>,
+        move_error: Option<i32>,
+        restore_error: bool,
+        replace_flags: Vec<u32>,
+        move_flags: Vec<u32>,
+        real: Windows,
+    }
+
+    impl ScriptedOps {
+        fn new(errors: &[i32], move_error: Option<i32>, restore_error: bool) -> Self {
+            Self {
+                errors: errors.iter().copied().collect(),
+                move_error,
+                restore_error,
+                replace_flags: vec![],
+                move_flags: vec![],
+                real: Windows,
+            }
+        }
+    }
+
+    impl CommitOps for ScriptedOps {
+        fn replace(
+            &mut self,
+            destination: &Path,
+            temp: &Path,
+            backup: &Path,
+            flags: u32,
+        ) -> Result<(), SaveError> {
+            self.replace_flags.push(flags);
+            match self.errors.pop_front().expect("unexpected replacement") {
+                0 => self.real.replace(destination, temp, backup, flags),
+                1177 => {
+                    fs::rename(destination, backup)?;
+                    Err(SaveError::from_raw_os_error(1177))
+                }
+                code => Err(SaveError::from_raw_os_error(code)),
+            }
+        }
+        fn move_new(&mut self, source: &Path, destination: &Path) -> Result<(), SaveError> {
+            if self.restore_error {
+                Err(SaveError::from_raw_os_error(5))
+            } else {
+                self.real.move_new(source, destination)
+            }
+        }
+        fn move_replace(
+            &mut self,
+            source: &Path,
+            destination: &Path,
+            flags: u32,
+        ) -> Result<(), SaveError> {
+            self.move_flags.push(flags);
+            if let Some(code) = self.move_error {
+                Err(SaveError::from_raw_os_error(code))
+            } else {
+                self.real.move_replace(source, destination, flags)
+            }
+        }
+        fn remove_backup(&mut self, backup: &Path) -> Result<(), SaveError> {
+            self.real.remove_backup(backup)
+        }
+    }
+
+    fn export_with_script(
+        destination: &Path,
+        backup: &Path,
+        ops: &mut ScriptedOps,
+    ) -> Result<super::super::SaveResponse, SaveError> {
+        super::super::write_export_transaction(
+            destination,
+            "complete replacement",
+            |file, bytes| std::io::Write::write_all(file, bytes),
+            |temp| commit_with(temp, destination, true, backup, ops),
+        )
+    }
+
+    #[test]
+    fn permission_errors_retry_with_exact_relaxed_flags() {
+        for code in [5, 65, 1314] {
+            let dir = super::super::tests::temp_dir("relaxed-permission");
+            let destination = dir.join("plan.md");
+            let backup = dir.join("backup");
+            fs::write(&destination, "previous export").unwrap();
+            let mut ops = ScriptedOps::new(&[code, 0], Some(5), false);
+            export_with_script(&destination, &backup, &mut ops).unwrap();
+            assert_eq!(ops.replace_flags, [0, 0x6]);
+            assert!(ops.move_flags.is_empty());
+            assert_eq!(
+                fs::read_to_string(&destination).unwrap(),
+                "complete replacement"
+            );
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_relaxed_replace_uses_exact_atomic_move_flags() {
+        let dir = super::super::tests::temp_dir("final-move");
+        let destination = dir.join("plan.md");
+        let backup = dir.join("backup");
+        fs::write(&destination, "previous export").unwrap();
+        let mut ops = ScriptedOps::new(&[5, 5], None, false);
+        export_with_script(&destination, &backup, &mut ops).unwrap();
+        assert_eq!(ops.replace_flags, [0, 0x6]);
+        assert_eq!(ops.move_flags, [0x9]);
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "complete replacement"
+        );
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn all_fallbacks_failing_preserve_old_bytes_and_acl_and_clean_the_temp() {
+        for second_error in [5, 32, 1175, 1176] {
+            let dir = super::super::tests::temp_dir("all-failed");
+            let destination = dir.join("plan.md");
+            let backup = dir.join("backup");
+            fs::write(&destination, "previous export").unwrap();
+            protect(&destination);
+            let before = dacl(&destination);
+            let mut ops = ScriptedOps::new(&[5, second_error], Some(5), false);
+            let error = export_with_script(&destination, &backup, &mut ops).unwrap_err();
+            assert!(error.to_string().contains("strict replace"));
+            assert!(error.to_string().contains("relaxed replace"));
+            assert!(error.to_string().contains("final move"));
+            assert_eq!(ops.replace_flags, [0, 0x6]);
+            assert_eq!(ops.move_flags, [0x9]);
+            assert_eq!(fs::read_to_string(&destination).unwrap(), "previous export");
+            assert!(dacl(&destination) == before);
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn partial_relaxed_failure_restores_old_file_if_final_move_fails() {
+        for restore_error in [false, true] {
+            let dir = super::super::tests::temp_dir("partial-relaxed");
+            let destination = dir.join("plan.md");
+            let backup = dir.join("backup");
+            fs::write(&destination, "previous export").unwrap();
+            protect(&destination);
+            let before = dacl(&destination);
+            let mut ops = ScriptedOps::new(&[5, 1177], Some(5), restore_error);
+            let error = export_with_script(&destination, &backup, &mut ops).unwrap_err();
+            assert_eq!(ops.replace_flags, [0, 0x6]);
+            assert_eq!(ops.move_flags, [0x9]);
+            let preserved = if restore_error { &backup } else { &destination };
+            assert_eq!(fs::read_to_string(preserved).unwrap(), "previous export");
+            assert!(dacl(preserved) == before);
+            assert_eq!(
+                fs::read_dir(&dir).unwrap().count(),
+                1,
+                "partial temp must be removed"
+            );
+            if restore_error {
+                assert!(error.to_string().contains(&backup.display().to_string()));
+                assert!(!destination.exists());
+            } else {
+                assert!(!backup.exists());
+            }
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn partial_relaxed_failure_can_complete_via_final_move() {
+        let dir = super::super::tests::temp_dir("partial-complete");
+        let destination = dir.join("plan.md");
+        let backup = dir.join("backup");
+        fs::write(&destination, "previous export").unwrap();
+        let mut ops = ScriptedOps::new(&[5, 1177], None, false);
+        export_with_script(&destination, &backup, &mut ops).unwrap();
+        assert_eq!(ops.replace_flags, [0, 0x6]);
+        assert_eq!(ops.move_flags, [0x9]);
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "complete replacement"
+        );
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn nonpermission_first_error_does_not_relax_or_replace_move() {
+        let dir = super::super::tests::temp_dir("no-relax");
+        let destination = dir.join("plan.md");
+        let backup = dir.join("backup");
+        fs::write(&destination, "previous export").unwrap();
+        let mut ops = ScriptedOps::new(&[32, 0], None, false);
+        assert_eq!(
+            export_with_script(&destination, &backup, &mut ops)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(32)
+        );
+        assert_eq!(ops.replace_flags, [0]);
+        assert!(ops.move_flags.is_empty());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "previous export");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

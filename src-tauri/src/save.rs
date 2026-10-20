@@ -80,7 +80,8 @@ pub async fn save_via_native_dialog(
 
 /// Reports success only after the bytes are flushed and the file size is verified.
 /// The bytes go to a temporary sibling first and replace the destination only once complete,
-/// Windows preserves the old DACL; a partial replacement failure may retain a recovery backup.
+/// Windows first preserves the old DACL, with approved permission fallbacks that may change it.
+/// A partial replacement failure may retain a recovery backup reported in the error.
 pub fn write_export_file(path: &Path, content: &str) -> Result<SaveResponse, SaveError> {
     write_export_with(path, content, |file, bytes| file.write_all(bytes))
 }
@@ -92,6 +93,24 @@ fn write_export_with(
 ) -> Result<SaveResponse, SaveError> {
     #[cfg(windows)]
     let existed = windows_commit::destination_exists(path)?;
+    write_export_transaction(path, content, write, |temp| {
+        #[cfg(windows)]
+        {
+            windows_commit::commit(temp, path, existed)
+        }
+        #[cfg(not(windows))]
+        {
+            fs::rename(temp, path)
+        }
+    })
+}
+
+fn write_export_transaction(
+    path: &Path,
+    content: &str,
+    write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+    commit: impl FnOnce(&Path) -> Result<(), SaveError>,
+) -> Result<SaveResponse, SaveError> {
     let temp = temp_sibling(path)?;
     let written = (|| {
         let mut file = OpenOptions::new()
@@ -105,10 +124,7 @@ fn write_export_with(
             return Err(SaveError::other("written size differs from content size"));
         }
         drop(file);
-        #[cfg(windows)]
-        windows_commit::commit(&temp, path, existed)?;
-        #[cfg(not(windows))]
-        fs::rename(&temp, path)?;
+        commit(&temp)?;
         Ok(bytes)
     })();
     if written.is_err() {

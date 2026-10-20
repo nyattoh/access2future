@@ -15,7 +15,11 @@ fn wide(path: &Path) -> Vec<u16> {
 }
 
 pub(super) fn protect(path: &Path) {
-    let sddl: Vec<u16> = "D:P(A;;FA;;;OW)".encode_utf16().chain(Some(0)).collect();
+    set_dacl(path, "D:P(A;;FA;;;OW)");
+}
+
+pub(super) fn set_dacl(path: &Path, sddl: &str) {
+    let sddl: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
     let mut descriptor = std::ptr::null_mut();
     unsafe {
         assert_ne!(
@@ -160,5 +164,27 @@ fn windows_disappeared_destination_can_be_created_without_replacement() {
     .unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "new");
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn windows_restricted_staging_acl_allows_full_overwrite() {
+    let dir = tests::temp_dir("no-write-dac");
+    let path = dir.join("plan.md");
+    for content in ["first export", "complete replacement"] {
+        write_export_with(&path, content, |file, bytes| {
+            let staged = fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .find(|p| p != &path)
+                .unwrap();
+            // Owner Rights explicitly grants read/write/delete but not WRITE_DAC.
+            set_dacl(&staged, "D:P(A;;GRGWSD;;;OW)");
+            file.write_all(bytes)
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
     fs::remove_dir_all(dir).unwrap();
 }
