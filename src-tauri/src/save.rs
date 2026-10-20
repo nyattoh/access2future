@@ -98,7 +98,11 @@ fn write_export_with(
         {
             windows_commit::commit(temp, path, existed)
         }
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            unix_commit::commit(temp, path)
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             fs::rename(temp, path)
         }
@@ -117,6 +121,8 @@ fn write_export_transaction(
             .write(true)
             .create_new(true)
             .open(&temp)?;
+        #[cfg(unix)]
+        unix_commit::prepare_staged(&file, path)?;
         write(&mut file, content.as_bytes())?;
         file.sync_all()?;
         let bytes = file.metadata()?.len();
@@ -281,3 +287,7 @@ mod windows_tests;
 #[cfg(windows)]
 #[path = "save_windows.rs"]
 mod windows_commit;
+
+#[cfg(unix)]
+#[path = "save_unix.rs"]
+mod unix_commit;
