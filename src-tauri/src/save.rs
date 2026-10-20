@@ -80,7 +80,7 @@ pub async fn save_via_native_dialog(
 
 /// Reports success only after the bytes are flushed and the file size is verified.
 /// The bytes go to a temporary sibling first and replace the destination only once complete,
-/// so a failed save leaves an existing file untouched.
+/// Windows preserves the old DACL; a partial replacement failure may retain a recovery backup.
 pub fn write_export_file(path: &Path, content: &str) -> Result<SaveResponse, SaveError> {
     write_export_with(path, content, |file, bytes| file.write_all(bytes))
 }
@@ -90,6 +90,8 @@ fn write_export_with(
     content: &str,
     write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
 ) -> Result<SaveResponse, SaveError> {
+    #[cfg(windows)]
+    let existed = windows_commit::destination_exists(path)?;
     let temp = temp_sibling(path)?;
     let written = (|| {
         let mut file = OpenOptions::new()
@@ -103,6 +105,9 @@ fn write_export_with(
             return Err(SaveError::other("written size differs from content size"));
         }
         drop(file);
+        #[cfg(windows)]
+        windows_commit::commit(&temp, path, existed)?;
+        #[cfg(not(windows))]
         fs::rename(&temp, path)?;
         Ok(bytes)
     })();
@@ -126,7 +131,7 @@ fn temp_sibling(path: &Path) -> Result<PathBuf, SaveError> {
 mod tests {
     use super::*;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
+    pub(super) fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("a2f-save-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -252,3 +257,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "save_windows_tests.rs"]
+mod windows_tests;
+
+#[cfg(windows)]
+#[path = "save_windows.rs"]
+mod windows_commit;
