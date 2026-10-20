@@ -1,5 +1,7 @@
+#[cfg(any(test, not(any(windows, unix))))]
+use std::fs::OpenOptions;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -115,12 +117,21 @@ fn write_export_transaction(
     write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
     commit: impl FnOnce(&Path) -> Result<(), SaveError>,
 ) -> Result<SaveResponse, SaveError> {
+    #[cfg(unix)]
+    unix_commit::preflight(path)?;
     let temp = temp_sibling(path)?;
+    let mut created = false;
     let written = (|| {
+        #[cfg(windows)]
+        let mut file = windows_commit::create_staged(&temp, path)?;
+        #[cfg(unix)]
+        let mut file = unix_commit::create_staged(&temp, path)?;
+        #[cfg(not(any(windows, unix)))]
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp)?;
+        created = true;
         #[cfg(unix)]
         unix_commit::prepare_staged(&file, path)?;
         write(&mut file, content.as_bytes())?;
@@ -133,7 +144,7 @@ fn write_export_transaction(
         commit(&temp)?;
         Ok(bytes)
     })();
-    if written.is_err() {
+    if written.is_err() && created {
         let _ = fs::remove_file(&temp);
     }
     Ok(SaveResponse {

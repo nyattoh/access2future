@@ -1,4 +1,46 @@
-use std::{fs, fs::File, io, os::unix::fs::MetadataExt, path::Path};
+use std::{
+    fs,
+    fs::File,
+    io,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    path::Path,
+};
+
+pub(crate) fn preflight(destination: &Path) -> io::Result<()> {
+    // Ask the OS using the same write access as File::create, without truncation.
+    // Mode bits alone would miss POSIX ACLs and effective-credential permissions.
+    match fs::metadata(destination) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "save destination is not a regular file",
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    match fs::OpenOptions::new().write(true).open(destination) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn create_staged(temp: &Path, destination: &Path) -> io::Result<File> {
+    preflight(destination)?;
+    let mode = match fs::symlink_metadata(destination) {
+        Ok(_) => 0o600,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => 0o666,
+        Err(error) => return Err(error),
+    };
+    // Existing exports start private even during the empty-stage preparation window.
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(temp)
+}
 
 fn require_matching_ownership(
     destination_uid: u32,
@@ -32,14 +74,20 @@ fn existing_permissions(
 }
 
 pub(crate) fn prepare_staged(file: &File, destination: &Path) -> io::Result<()> {
+    preflight(destination)?;
     if let Some(permissions) = existing_permissions(destination, &file.metadata()?)? {
         // Restrict the empty stage before private content is written to it.
         file.set_permissions(permissions)?;
+    } else if fs::symlink_metadata(destination).is_ok_and(|m| m.file_type().is_symlink()) {
+        // Rename replaces the link entry. Keep its new content private without
+        // adopting the target's ownership or changing the target itself.
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }
 
 pub(crate) fn commit(temp: &Path, destination: &Path) -> io::Result<()> {
+    preflight(destination)?;
     if let Some(permissions) = existing_permissions(destination, &fs::metadata(temp)?)? {
         // Re-read current metadata and apply mode after writing, immediately before rename.
         fs::set_permissions(temp, permissions)?;
@@ -198,7 +246,7 @@ mod tests {
             .create_new(true)
             .open(&temp)
             .unwrap();
-        let staged_mode = file.metadata().unwrap().mode() & 0o7777;
+        let staged_mode = 0o600;
         prepare_staged(&file, &destination).unwrap();
         assert_eq!(file.metadata().unwrap().mode() & 0o7777, staged_mode);
         file.write_all(b"new link entry").unwrap();
@@ -217,6 +265,120 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&target).unwrap(), "private target");
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o7777, 0o600);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn readonly_0444_is_refused_before_private_content_is_written() {
+        let dir = directory();
+        let destination = dir.join("plan.md");
+        let temp = dir.join("temp");
+        fs::write(&destination, "old private export").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o444)).unwrap();
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .unwrap();
+        let error = prepare_staged(&file, &destination).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(file.metadata().unwrap().len(), 0);
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "old private export"
+        );
+        assert_eq!(fs::metadata(&destination).unwrap().mode() & 0o7777, 0o444);
+        drop(file);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn commit_cannot_bypass_write_access_revoked_after_staging() {
+        let dir = directory();
+        let destination = dir.join("plan.md");
+        let temp = dir.join("temp");
+        fs::write(&destination, "old private export").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&temp, "new complete export").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o444)).unwrap();
+        assert_eq!(
+            commit(&temp, &destination).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "old private export"
+        );
+        assert_eq!(fs::metadata(&destination).unwrap().mode() & 0o7777, 0o444);
+        assert!(temp.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn readonly_0444_is_rejected_before_a_stage_is_created() {
+        let dir = directory();
+        let destination = dir.join("plan.md");
+        let temp = dir.join("temp");
+        fs::write(&destination, "old").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o444)).unwrap();
+        let error = create_staged(&temp, &destination).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!temp.exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn existing_stage_is_created_private_before_metadata_preparation() {
+        let dir = directory();
+        let destination = dir.join("plan.md");
+        let temp = dir.join("temp");
+        fs::write(&destination, "old").unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).unwrap();
+        let file = create_staged(&temp, &destination).unwrap();
+        assert_eq!(file.metadata().unwrap().mode() & 0o077, 0);
+        assert_eq!(file.metadata().unwrap().len(), 0);
+        prepare_staged(&file, &destination).unwrap();
+        assert_eq!(file.metadata().unwrap().mode() & 0o7777, 0o644);
+        drop(file);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn new_stage_keeps_the_normal_creation_mode() {
+        let dir = directory();
+        let destination = dir.join("new.md");
+        let temp = dir.join("temp");
+        let control = dir.join("ordinary");
+        fs::write(&control, "").unwrap();
+        let file = create_staged(&temp, &destination).unwrap();
+        assert_eq!(
+            file.metadata().unwrap().mode() & 0o7777,
+            fs::metadata(&control).unwrap().mode() & 0o7777
+        );
+        drop(file);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn readonly_symlink_target_cannot_bypass_write_access() {
+        let dir = directory();
+        let destination = dir.join("link.md");
+        let target = dir.join("target.md");
+        let temp = dir.join("temp");
+        fs::write(&target, "private target").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o444)).unwrap();
+        std::os::unix::fs::symlink(&target, &destination).unwrap();
+        assert_eq!(
+            create_staged(&temp, &destination).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(!temp.exists());
+        assert!(
+            fs::symlink_metadata(&destination)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "private target");
         fs::remove_dir_all(dir).unwrap();
     }
 }

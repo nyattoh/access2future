@@ -1,19 +1,35 @@
 use super::SaveError;
-use std::{fs, os::windows::ffi::OsStrExt, path::Path};
+use std::{
+    fs,
+    fs::File,
+    os::windows::{ffi::OsStrExt, io::FromRawHandle},
+    path::Path,
+};
 use windows_sys::Win32::{
     Foundation::{
         ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NETWORK_ACCESS_DENIED,
-        ERROR_PRIVILEGE_NOT_HELD, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
+        ERROR_PRIVILEGE_NOT_HELD, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2, GENERIC_WRITE,
+        INVALID_HANDLE_VALUE,
+    },
+    Security::{
+        DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetFileSecurityW, GetLengthSid,
+        GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetSecurityDescriptorGroup,
+        GetSecurityDescriptorOwner, OWNER_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+        SECURITY_ATTRIBUTES,
     },
     Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
         REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS, ReplaceFileW,
     },
 };
 
 pub(super) fn destination_exists(path: &Path) -> Result<bool, SaveError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(metadata) if metadata.file_type().is_file() => {
+            fs::OpenOptions::new().write(true).open(path)?;
+            Ok(true)
+        }
         Ok(_) => Err(SaveError::other("save destination is not a regular file")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
@@ -41,6 +57,146 @@ fn wide(path: &Path) -> Result<Vec<u16>, SaveError> {
     };
     extended.push(0);
     Ok(extended)
+}
+
+struct Security(Vec<u32>);
+
+#[derive(PartialEq, Eq)]
+struct SecurityIdentity {
+    owner: Vec<u8>,
+    group: Vec<u8>,
+    dacl: Option<Vec<u8>>,
+    dacl_present: bool,
+    protected: bool,
+}
+
+impl Security {
+    fn read(path: &Path) -> Result<Self, SaveError> {
+        let path = wide(path)?;
+        let information =
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut needed = 0;
+        // The first call obtains the required length; u32 storage aligns the descriptor.
+        unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                information,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            );
+        }
+        if needed == 0 {
+            return Err(SaveError::last_os_error());
+        }
+        let mut buffer = vec![0u32; (needed as usize).div_ceil(4)];
+        if unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                information,
+                buffer.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(SaveError::last_os_error());
+        }
+        Ok(Self(buffer))
+    }
+
+    fn identity(&self) -> Result<SecurityIdentity, SaveError> {
+        let descriptor = self.0.as_ptr().cast_mut().cast();
+        let mut owner = std::ptr::null_mut();
+        let mut group = std::ptr::null_mut();
+        let mut acl = std::ptr::null_mut();
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut control = 0;
+        let mut revision = 0;
+        // These pointers refer to validated self-relative data returned by Windows.
+        unsafe {
+            if GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) == 0
+                || GetSecurityDescriptorGroup(descriptor, &mut group, &mut defaulted) == 0
+                || GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted)
+                    == 0
+                || GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) == 0
+            {
+                return Err(SaveError::last_os_error());
+            }
+            if owner.is_null() || group.is_null() {
+                return Err(SaveError::new(
+                    std::io::ErrorKind::InvalidData,
+                    "export security descriptor has no owner or group",
+                ));
+            }
+            Ok(SecurityIdentity {
+                owner: std::slice::from_raw_parts(owner.cast(), GetLengthSid(owner) as usize)
+                    .to_vec(),
+                group: std::slice::from_raw_parts(group.cast(), GetLengthSid(group) as usize)
+                    .to_vec(),
+                dacl: if present != 0 && !acl.is_null() {
+                    Some(std::slice::from_raw_parts(acl.cast(), (*acl).AclSize as usize).to_vec())
+                } else {
+                    None
+                },
+                dacl_present: present != 0,
+                protected: control & SE_DACL_PROTECTED != 0,
+            })
+        }
+    }
+}
+
+pub(super) fn create_staged(temp: &Path, destination: &Path) -> Result<File, SaveError> {
+    let mut security = if destination_exists(destination)? {
+        Some(Security::read(destination)?)
+    } else {
+        None
+    };
+    let expected = security.as_ref().map(Security::identity).transpose()?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: security
+            .as_mut()
+            .map_or(std::ptr::null_mut(), |s| s.0.as_mut_ptr().cast()),
+        bInheritHandle: 0,
+    };
+    let name = wide(temp)?;
+    // CREATE_NEW attaches the destination security before the stage can contain data.
+    // A foreign owner/group that cannot be assigned fails closed, without privileges.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            &attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(SaveError::last_os_error());
+    }
+    // The unique successful handle is transferred to File exactly once.
+    let file = unsafe { File::from_raw_handle(handle) };
+    let verified = (|| {
+        if let Some(expected) = expected {
+            if Security::read(temp)?.identity()? != expected {
+                return Err(SaveError::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "staged export security differs from destination; no content written",
+                ));
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = verified {
+        drop(file);
+        let _ = fs::remove_file(temp);
+        return Err(error);
+    }
+    Ok(file)
 }
 
 trait CommitOps {
@@ -71,6 +227,7 @@ impl CommitOps for Windows {
         backup: &Path,
         flags: u32,
     ) -> Result<(), SaveError> {
+        destination_exists(destination)?;
         let destination = wide(destination)?;
         let temp = wide(temp)?;
         let backup = wide(backup)?;
@@ -102,6 +259,7 @@ impl CommitOps for Windows {
         destination: &Path,
         flags: u32,
     ) -> Result<(), SaveError> {
+        destination_exists(destination)?;
         move_file(source, destination, flags)
     }
 
@@ -601,6 +759,28 @@ mod tests {
         assert!(ops.move_flags.is_empty());
         assert_eq!(fs::read_to_string(&destination).unwrap(), "previous export");
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn real_final_move_cannot_replace_a_nonwritable_destination() {
+        let dir = super::super::tests::temp_dir("move-write-access");
+        let destination = dir.join("plan.md");
+        let temp = dir.join("stage");
+        fs::write(&destination, "old").unwrap();
+        fs::write(&temp, "new").unwrap();
+        super::super::windows_tests::set_dacl(&destination, "D:P(A;;GRSD;;;OW)");
+        let before = super::super::windows_tests::dacl(&destination);
+        let error = Windows
+            .move_replace(
+                &temp,
+                &destination,
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "old");
+        assert_eq!(super::super::windows_tests::dacl(&destination), before);
+        assert!(temp.exists());
         fs::remove_dir_all(dir).unwrap();
     }
 }

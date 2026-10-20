@@ -90,7 +90,7 @@ pub(super) fn dacl(path: &Path) -> (Vec<u8>, bool) {
 }
 
 #[test]
-fn windows_overwrite_preserves_protected_dacl_and_staging_is_a_negative_control() {
+fn windows_overwrite_preserves_protected_dacl_before_and_after_staging() {
     let dir = tests::temp_dir("dacl");
     let path = dir.join("plan.md");
     fs::write(&path, "old private export").unwrap();
@@ -103,7 +103,7 @@ fn windows_overwrite_preserves_protected_dacl_and_staging_is_a_negative_control(
             .map(|e| e.unwrap().path())
             .find(|p| p != &path)
             .unwrap();
-        assert_ne!(dacl(&staged), before, "staged inherited DACL must differ");
+        assert_eq!(dacl(&staged), before, "staged DACL must already match");
         file.write_all(bytes)
     })
     .unwrap();
@@ -179,12 +179,112 @@ fn windows_restricted_staging_acl_allows_full_overwrite() {
                 .find(|p| p != &path)
                 .unwrap();
             // Owner Rights explicitly grants read/write/delete but not WRITE_DAC.
-            set_dacl(&staged, "D:P(A;;GRGWSD;;;OW)");
+            if !path.exists() {
+                set_dacl(&staged, "D:P(A;;GRGWSD;;;OW)");
+            } else {
+                assert_eq!(dacl(&staged), dacl(&path));
+            }
             file.write_all(bytes)
         })
         .unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
     }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn windows_stage_has_destination_acl_before_first_content_byte() {
+    let dir = tests::temp_dir("prewrite-acl");
+    let path = dir.join("plan.md");
+    fs::write(&path, "old private export").unwrap();
+    protect(&path);
+    let before = dacl(&path);
+    let inherited = dir.join("negative-control");
+    fs::write(&inherited, "").unwrap();
+    assert_ne!(dacl(&inherited), before);
+    fs::remove_file(inherited).unwrap();
+    let result = write_export_with(&path, "private replacement", |file, bytes| {
+        let staged = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p != &path)
+            .unwrap();
+        assert_eq!(file.metadata()?.len(), 0);
+        assert_eq!(dacl(&staged), before, "ACL must precede content");
+        file.write_all(bytes)
+    });
+    result.unwrap();
+    assert_eq!(dacl(&path), before);
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn windows_read_only_dacl_refuses_save_before_writer_and_leaves_no_stage() {
+    let dir = tests::temp_dir("read-only-acl");
+    let path = dir.join("plan.md");
+    fs::write(&path, "old private export").unwrap();
+    set_dacl(&path, "D:P(A;;GRSD;;;OW)");
+    let before = dacl(&path);
+    let mut called = false;
+    let result = write_export_with(&path, "replacement", |file, bytes| {
+        called = true;
+        file.write_all(bytes)
+    });
+    assert!(
+        !called,
+        "a denied target must be rejected before staging content"
+    );
+    assert_eq!(
+        result.unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "old private export");
+    assert_eq!(dacl(&path), before);
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn windows_permission_revoked_during_staging_cannot_use_replacement_fallback() {
+    let dir = tests::temp_dir("revoked-acl");
+    let path = dir.join("plan.md");
+    fs::write(&path, "old private export").unwrap();
+    let result = write_export_with(&path, "replacement", |file, bytes| {
+        set_dacl(&path, "D:P(A;;GRSD;;;OW)");
+        file.write_all(bytes)
+    });
+    assert_eq!(
+        result.unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "old private export");
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn windows_readonly_attribute_refuses_save_without_staging_content() {
+    let dir = tests::temp_dir("readonly-attribute");
+    let path = dir.join("plan.md");
+    fs::write(&path, "old").unwrap();
+    let original = fs::metadata(&path).unwrap().permissions();
+    let mut readonly = original.clone();
+    readonly.set_readonly(true);
+    fs::set_permissions(&path, readonly).unwrap();
+    let mut called = false;
+    let result = write_export_with(&path, "new", |file, bytes| {
+        called = true;
+        file.write_all(bytes)
+    });
+    assert!(!called);
+    assert_eq!(
+        result.unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    fs::set_permissions(&path, original).unwrap();
     fs::remove_dir_all(dir).unwrap();
 }
