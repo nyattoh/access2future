@@ -1,4 +1,10 @@
-use std::{fs::File, io::Write, path::Path};
+#[cfg(any(test, not(any(windows, unix))))]
+use std::fs::OpenOptions;
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -75,25 +81,90 @@ pub async fn save_via_native_dialog(
 }
 
 /// Reports success only after the bytes are flushed and the file size is verified.
+/// The bytes go to a temporary sibling first and replace the destination only once complete,
+/// Windows first preserves the old DACL, with approved permission fallbacks that may change it.
+/// A partial replacement failure may retain a recovery backup reported in the error.
 pub fn write_export_file(path: &Path, content: &str) -> Result<SaveResponse, SaveError> {
-    let mut file = File::create(path)?;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
-    let bytes = file.metadata()?.len();
-    if bytes != content.len() as u64 {
-        return Err(SaveError::other("written size differs from content size"));
+    write_export_with(path, content, |file, bytes| file.write_all(bytes))
+}
+
+fn write_export_with(
+    path: &Path,
+    content: &str,
+    write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+) -> Result<SaveResponse, SaveError> {
+    #[cfg(windows)]
+    let existed = windows_commit::destination_exists(path)?;
+    write_export_transaction(path, content, write, |temp| {
+        #[cfg(windows)]
+        {
+            windows_commit::commit(temp, path, existed)
+        }
+        #[cfg(unix)]
+        {
+            unix_commit::commit(temp, path)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            fs::rename(temp, path)
+        }
+    })
+}
+
+fn write_export_transaction(
+    path: &Path,
+    content: &str,
+    write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+    commit: impl FnOnce(&Path) -> Result<(), SaveError>,
+) -> Result<SaveResponse, SaveError> {
+    #[cfg(unix)]
+    unix_commit::preflight(path)?;
+    let temp = temp_sibling(path)?;
+    let mut created = false;
+    let written = (|| {
+        #[cfg(windows)]
+        let mut file = windows_commit::create_staged(&temp, path)?;
+        #[cfg(unix)]
+        let mut file = unix_commit::create_staged(&temp, path)?;
+        #[cfg(not(any(windows, unix)))]
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        created = true;
+        #[cfg(unix)]
+        unix_commit::prepare_staged(&file, path)?;
+        write(&mut file, content.as_bytes())?;
+        file.sync_all()?;
+        let bytes = file.metadata()?.len();
+        if bytes != content.len() as u64 {
+            return Err(SaveError::other("written size differs from content size"));
+        }
+        drop(file);
+        commit(&temp)?;
+        Ok(bytes)
+    })();
+    if written.is_err() && created {
+        let _ = fs::remove_file(&temp);
     }
     Ok(SaveResponse {
         path: path.display().to_string(),
-        bytes,
+        bytes: written?,
     })
+}
+
+/// A unique hidden name in the destination folder, so the final rename stays on one volume.
+fn temp_sibling(path: &Path) -> Result<PathBuf, SaveError> {
+    path.file_name()
+        .ok_or_else(|| SaveError::other("save path has no file name"))?;
+    Ok(path.with_file_name(format!(".{}.tmp", uuid::Uuid::new_v4())))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
+    pub(super) fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("a2f-save-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -122,6 +193,32 @@ mod tests {
         write_export_file(&path, "{}").unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "only the destination remains"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_existing_file_untouched() {
+        let dir = temp_dir("fail");
+        let path = dir.join("plan.md");
+        std::fs::write(&path, "previous plan").unwrap();
+
+        let result = write_export_with(&path, "replacement plan", |file, bytes| {
+            file.write_all(&bytes[..4])?;
+            Err(std::io::Error::other("destination disconnected"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous plan");
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "no temporary file is left behind"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -136,7 +233,48 @@ mod tests {
             "a directory is not a file"
         );
         assert!(!missing_parent.exists());
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            0,
+            "failed saves leave no temporary file"
+        );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_long_destination_names_and_preserves_them_after_failure() {
+        let dir = temp_dir("long");
+        for name in [
+            format!("{}.md", "a".repeat(240)),
+            format!("{}.json", "計".repeat(80)),
+        ] {
+            let path = dir.join(name);
+            let saved = write_export_file(&path, "first plan").unwrap();
+            assert_eq!(saved.bytes, 10);
+            assert_eq!(saved.path, path.display().to_string());
+            write_export_file(&path, "新版").unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), "新版");
+            let result = write_export_with(&path, "replacement", |file, bytes| {
+                file.write_all(&bytes[..3])?;
+                Err(SaveError::other("simulated write failure"))
+            });
+            assert!(result.is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), "新版");
+            fs::remove_file(&path).unwrap();
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn temporary_siblings_have_bounded_unique_names() {
+        let path = Path::new("exports").join(format!("{}.json", "a".repeat(240)));
+        let first = temp_sibling(&path).unwrap();
+        let second = temp_sibling(&path).unwrap();
+        assert_eq!(first.parent(), path.parent());
+        assert_ne!(first, second);
+        assert!(first.file_name().unwrap().len() <= 64);
+        assert!(temp_sibling(Path::new("/")).is_err());
     }
 
     #[test]
@@ -152,3 +290,15 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "save_windows_tests.rs"]
+mod windows_tests;
+
+#[cfg(windows)]
+#[path = "save_windows.rs"]
+mod windows_commit;
+
+#[cfg(unix)]
+#[path = "save_unix.rs"]
+mod unix_commit;
